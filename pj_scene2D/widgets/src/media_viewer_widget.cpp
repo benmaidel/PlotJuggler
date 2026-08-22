@@ -30,7 +30,15 @@ namespace PJ {
 static constexpr int kPointInspectorCropSize = 10;
 
 MediaViewerWidget::MediaViewerWidget(QWidget* parent) : QRhiWidget(parent) {
+  // Backend per platform. macOS must use Metal: Apple's OpenGL is frozen at 4.1
+  // (and deprecated), so a GL context there cannot consume the GLSL 440 variant
+  // the media shader is baked at — the pipeline silently failed to build and the
+  // view stayed blank. Linux/Windows stay on OpenGL, which is the tested path.
+#if defined(Q_OS_MACOS)
+  setApi(Api::Metal);
+#else
   setApi(Api::OpenGL);
+#endif
   setObjectName(QStringLiteral("mediaViewerCanvas"));
   setFocusPolicy(Qt::StrongFocus);
   setMouseTracking(true);

@@ -40,9 +40,19 @@ development. The helper scripts branch on `uname` via
 - **The 3D view (`pj_scene3D`) is disabled on macOS for now.** Its renderer needs
   OpenGL 4.5 core + a compute shader, but Apple's OpenGL is frozen at 4.1 with no
   compute. `SceneViewWidget` detects this and shows an "unavailable" placeholder
-  instead of the scene — the rest of the app (plotting, 2D scene, playback, data
-  sources) works normally. The real fix is the QRhi/Metal backend port (planned).
-  pj_scene2D already renders via QRhi and works on Metal today.
+  instead of the scene — plotting, playback and data sources work normally. The
+  real fix is the QRhi/Metal backend port (planned).
+- **The 2D image/video view (`pj_scene2D`) does not render on macOS either** —
+  a separate, pre-existing limitation. `MediaViewerWidget` is a `QRhiWidget` but
+  calls `setApi(Api::OpenGL)` unconditionally (`media_viewer_widget.cpp`), and its
+  committed `yuv_to_rgb.*.qsb` blobs carry **only a GLSL 440** variant, which
+  Apple's 4.1 GL ceiling can never satisfy (QRhi's GL backend does not translate
+  SPIR-V at runtime). The overlay shaders (`scene_*.qsb`: 100es/120/150) are fine.
+  Nothing in this repo has ever run on Metal. Fixing it means re-baking the image
+  shaders with an MSL (and ≤410 GLSL) target and letting QRhi pick the platform
+  default backend instead of forcing OpenGL — which requires the `qsb` tool
+  (`aqt ... -m qtshadertools`) and the still-missing `qt6_add_shaders` CMake rule
+  (pj_scene2D's deferred F-009). See `pj_scene2D/docs/TECHNICAL_NOTES.md` §1.
 
 ## What PJ4 actually uses (so you can judge relevance)
 
