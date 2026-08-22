@@ -1245,7 +1245,7 @@ TEST(PlatformDetectionTest, CurrentPlatformHasExpectedFormat) {
 // On the primary Linux x86_64 build/CI host, the reported platform must match the
 // key used in the registry fixture so that install() can resolve the download artifact.
 TEST(PlatformDetectionTest, LinuxX86PlatformMatchesRegistryKey) {
-  if (PlatformUtils::isWindows()) {
+  if (!PlatformUtils::currentPlatform().startsWith("linux")) {
     GTEST_SKIP() << "test pins the Linux x86_64 platform key";
   }
   EXPECT_EQ(PlatformUtils::currentPlatform(), "linux-x86_64");
@@ -1263,6 +1263,12 @@ TEST(PlatformDetectionTest, CurrentPlatformResolvesRegistryArtifact) {
       "sha256:0000000000000000000000000000000000000000000000000000000000000000"};
   ext.platforms["windows-x86_64"] = {
       "https://example.com/test/extension-windows-x64.zip",
+      "sha256:0000000000000000000000000000000000000000000000000000000000000000"};
+  ext.platforms["macos-arm64"] = {
+      "https://example.com/test/extension-macos-arm64.zip",
+      "sha256:0000000000000000000000000000000000000000000000000000000000000000"};
+  ext.platforms["macos-x86_64"] = {
+      "https://example.com/test/extension-macos-x86_64.zip",
       "sha256:0000000000000000000000000000000000000000000000000000000000000000"};
 
   EXPECT_TRUE(ext.platforms.contains(PlatformUtils::currentPlatform()))
