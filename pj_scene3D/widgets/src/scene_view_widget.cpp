@@ -527,8 +527,13 @@ void SceneViewWidget::paintGL() {
     // Qt's GL paint engine, which works on the 4.1 context macOS provides.
     if (gl_unavailable_) {
       QPainter painter(this);
-      painter.fillRect(rect(), palette().window());
-      painter.setPen(palette().color(QPalette::WindowText));
+      const QColor background = palette().window().color();
+      painter.fillRect(rect(), background);
+      // Pick the text color from the background's luminance rather than
+      // QPalette::WindowText: in the app's dark theme that role is a dim grey on
+      // a near-black dock, which renders the message almost invisible — the panel
+      // just looks broken. Contrast against whatever the theme actually gives us.
+      painter.setPen(background.lightnessF() < 0.5 ? QColor(0xDA, 0xDE, 0xE3) : QColor(0x20, 0x24, 0x28));
       painter.drawText(rect(), Qt::AlignCenter | Qt::TextWordWrap,
                        tr("3D view unavailable\n\nThis view requires OpenGL 4.5.\n"
                           "A Metal backend for macOS is in progress."));
