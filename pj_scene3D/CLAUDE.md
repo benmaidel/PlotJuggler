@@ -182,6 +182,19 @@ full mechanism.
     environment (Karis `envBRDFApprox`, no HDRI cubemap), so metals reflect the
     sky/ground gradient instead of reading near-black. A true prefiltered-cube
     IBL from an HDRI environment is still future work.
+- `tools/` — **not compiled**; dev scripts, no CMake target. Today it holds the
+  headless visual-verification harness:
+  `screenshot_3d.sh` launches `plotjuggler4` with a canned layout that opens a 3D
+  dock over a synthetic MCAP (`generate_scene3d_fixture.py` writes `/tf` +
+  `/points`, ROS 2 CDR), then grabs the first `SceneViewWidget` framebuffer to a
+  PNG via the app's own `--screenshot`. Its value is as the repeatable
+  before/after check for the OpenGL → QRhi/Metal port; on macOS today it captures
+  the "3D view unavailable" placeholder, which is the correct result and also
+  proves the OpenGL-4.5 guard still fires. The layout template
+  (`scene3d_screenshot.pj4.xml.in`) documents the persistence schema it depends
+  on — notably that a non-interactive reload needs BOTH a `<plugin ID>` matching
+  the data-source plugin's manifest `name` and a config payload carrying its own
+  absolute `filepath`.
 
 # Validation
 
