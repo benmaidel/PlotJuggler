@@ -1,7 +1,7 @@
 # Qt version notes (for AI agents and humans)
 
 **PJ4 builds against Qt 6.11.1.** Install it with [`../install_qt6.sh`](../install_qt6.sh)
-(the single source of truth for the Linux Qt version).
+(the single source of truth for the Qt version; it auto-selects the host arch).
 
 > **Read this if your training data predates ~2025.** Qt 6.9, 6.10 and 6.11
 > shipped *after* the knowledge cutoff of most current models. If you "know" PJ4
@@ -19,6 +19,30 @@ support) — beta as of mid-2026, final ~autumn 2026. **Plan: ride 6.11.x now, t
 settle on 6.12 LTS when it ships.** Qt 6 guarantees source/binary compatibility
 across the whole 6.x series, so 6.8 → 6.11 → 6.12 is low-risk for a pure-Widgets
 app like PJ4.
+
+## Building on macOS (developer build, from the build tree)
+
+v1 targets Linux, but the app builds and runs on macOS from the build tree for
+development. The helper scripts branch on `uname` via
+[`../platform_env.sh`](../platform_env.sh):
+
+- **Qt install (aqt gotcha):** macOS uses `aqt install-qt mac desktop 6.11.1
+  clang_64`, but aqt lays the (universal) build down in a folder literally named
+  `macos` — so the install *arg* is `clang_64` while the on-disk folder is
+  `.qt/6.11.1/macos`, unlike Linux where both are `gcc_64`/`linux_gcc_64`. When
+  inspecting installed headers on macOS, look under `.qt/6.11.1/macos/include/`.
+- **FFmpeg:** `conanfile.txt` forces the Linux-only `with_vaapi`/`with_libdrm`
+  options; `build.sh` overrides them off on Darwin. Video decodes in software.
+  VideoToolbox HW decode is a future opt-in (`ffmpeg/*:with_videotoolbox=True`)
+  that `FfmpegDecoder` picks up at runtime with no C++ change.
+- **`-Werror`:** relaxed to non-fatal on Apple Clang during bring-up (it surfaces
+  diagnostics GCC doesn't); the full `-W…` set is still on. See root `CMakeLists.txt`.
+- **The 3D view (`pj_scene3D`) is disabled on macOS for now.** Its renderer needs
+  OpenGL 4.5 core + a compute shader, but Apple's OpenGL is frozen at 4.1 with no
+  compute. `SceneViewWidget` detects this and shows an "unavailable" placeholder
+  instead of the scene — the rest of the app (plotting, 2D scene, playback, data
+  sources) works normally. The real fix is the QRhi/Metal backend port (planned).
+  pj_scene2D already renders via QRhi and works on Metal today.
 
 ## What PJ4 actually uses (so you can judge relevance)
 

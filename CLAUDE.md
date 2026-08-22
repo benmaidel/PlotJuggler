@@ -138,7 +138,7 @@ The "wholesale lift" strategy for plot widgets (plan §5.3, §8) means porting f
 - **Qt 6.11.1** (required). Install via [`./install_qt6.sh`](./install_qt6.sh) — the single source of truth for the Qt version. See [`docs/QT_NOTES.md`](./docs/QT_NOTES.md) for what changed since 6.8 (new APIs past most training cutoffs, deprecations, build floors).
 - **CMake + Conan**. CMake is the build driver; Conan provides external non-vendored dependencies.
 - **C++20**.
-- **Linux-only** for v1. The code **must stay portable** — no Linux-only APIs or POSIX-specific paths in module code; gate anything platform-specific behind the usual CMake / `#ifdef` guards so a future macOS/Windows build is a build-system problem, not a code problem.
+- **Linux** is the v1 release target. The code **must stay portable** — no Linux-only APIs or POSIX-specific paths in module code; gate anything platform-specific behind the usual CMake / `#ifdef` guards so a macOS/Windows build is a build-system problem, not a code problem. **macOS is supported as a developer build from the build tree** (`./install_qt6.sh` + `./build.sh` + `./run.sh` are macOS-aware via `platform_env.sh`); the full app builds and runs, except the 3D view (`pj_scene3D`) which needs OpenGL 4.5 + compute and is disabled on macOS (shows a placeholder) until its QRhi/Metal backend lands. See [`docs/QT_NOTES.md`](./docs/QT_NOTES.md) → "Building on macOS". No macOS packaging (`.app`/`.dmg`) yet.
 
 ### Vendored third-party
 
