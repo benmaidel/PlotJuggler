@@ -26,14 +26,18 @@ if ! command -v aqt &>/dev/null; then
 fi
 
 echo "Installing Qt ${QT_VERSION} (${AQT_HOST}/${AQT_ARCH}) via aqtinstall..."
-# No add-on Qt modules needed (PJ4 uses only desktop-default modules; charts is
-# replaced by the vendored Qwt, websockets is unused).
+# One add-on module: qtshadertools, which provides the `qsb` shader baker that
+# CMake's qt6_add_shaders() drives. The QRhi-based scene widgets compile their
+# GLSL to .qsb at build time, so without it their shaders cannot be produced.
+# Everything else PJ4 needs is a desktop-default module (charts is replaced by
+# the vendored Qwt, websockets is unused).
 #
 # Retry with backoff: aqt intermittently picks a mirror that is missing the
 # metadata checksum ("Failed to download checksum ... Failed to locate XML data
 # for Qt version"). It's transient — a retry usually lands on a healthy mirror.
 attempt=0
-until aqt install-qt "$AQT_HOST" desktop "$QT_VERSION" "$AQT_ARCH" --outputdir "${SCRIPT_DIR}/.qt"; do
+until aqt install-qt "$AQT_HOST" desktop "$QT_VERSION" "$AQT_ARCH" -m qtshadertools \
+  --outputdir "${SCRIPT_DIR}/.qt"; do
   attempt=$((attempt + 1))
   if [[ "$attempt" -ge 5 ]]; then
     echo "aqt failed after ${attempt} attempts" >&2
