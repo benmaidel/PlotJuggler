@@ -421,6 +421,22 @@ void SceneViewWidget::initializeGL() {
   context_cleanup_connection_ = connect(
       context(), &QOpenGLContext::aboutToBeDestroyed, this, &SceneViewWidget::releaseGlResources, Qt::DirectConnection);
 
+  // The renderer requires the OpenGL 4.5 core function set (DSA + a compute
+  // shader). Where it can't be resolved — macOS caps OpenGL at 4.1 — skip ALL GL
+  // setup so nothing throws, and let paintGL draw a placeholder. This keeps the
+  // rest of the app fully usable until the QRhi/Metal backend replaces this path.
+  if (QOpenGLVersionFunctionsFactory::get<QOpenGLFunctions_4_5_Core>(context()) == nullptr) {
+    if (!gl_unavailable_) {
+      qCWarning(lcSceneViewWidget)
+          << "OpenGL 4.5 core is unavailable (this platform/GPU offers"
+          << format().majorVersion() << "." << format().minorVersion()
+          << "); the 3D view is disabled. A Metal (QRhi) backend is planned for macOS.";
+    }
+    gl_unavailable_ = true;
+    return;
+  }
+  gl_unavailable_ = false;
+
   gl::installDebugCallback();
   // Seed the scene HDR FBO's MSAA from the fixed default, NOT the context's
   // negotiated samples (0 when composited in an ADS dock) — SceneHdrFbo is an
@@ -506,6 +522,17 @@ void SceneViewWidget::paintGL() {
   auto* ctx = QOpenGLContext::currentContext();
   auto* funcs = QOpenGLVersionFunctionsFactory::get<QOpenGLFunctions_4_5_Core>(ctx);
   if (funcs == nullptr) {
+    // No 4.5 core context (see initializeGL). Draw a placeholder so the dock is
+    // not just black, then bail before any pass runs. QPainter on the widget uses
+    // Qt's GL paint engine, which works on the 4.1 context macOS provides.
+    if (gl_unavailable_) {
+      QPainter painter(this);
+      painter.fillRect(rect(), palette().window());
+      painter.setPen(palette().color(QPalette::WindowText));
+      painter.drawText(rect(), Qt::AlignCenter | Qt::TextWordWrap,
+                       tr("3D view unavailable\n\nThis view requires OpenGL 4.5.\n"
+                          "A Metal backend for macOS is in progress."));
+    }
     return;
   }
 

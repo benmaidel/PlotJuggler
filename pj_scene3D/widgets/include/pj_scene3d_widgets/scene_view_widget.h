@@ -403,6 +403,12 @@ class SceneViewWidget : public QOpenGLWidget {
   // One warning per context when the HDR chain is unavailable and paintGL falls
   // back to direct-to-backing rendering; re-armed by initializeGL.
   bool scene_fbo_fallback_logged_ = false;
+  // Set by initializeGL when the context can't resolve the OpenGL 4.5 core
+  // function set the renderer requires (notably macOS, capped at GL 4.1 with no
+  // compute shaders). When true, all GL setup is skipped and paintGL draws an
+  // "unavailable" placeholder instead of the scene — so the app runs fully with
+  // only the 3D view degraded. Removed once the QRhi/Metal backend lands.
+  bool gl_unavailable_ = false;
 
   // ---- Performance instrumentation state (see the benchmark-hooks block) -----
   // Non-stalling GPU timer over the scene passes; per-context, released in
