@@ -8,6 +8,7 @@
 # Set up only by default (seconds); pass --build to compile too.
 # Tear down with ./worktree-rm.sh once the PR is merged.
 set -euo pipefail
+source "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/platform_env.sh"
 
 usage() {
   cat <<'EOF'
@@ -59,9 +60,12 @@ if git -C "$MAIN_REPO" show-ref --verify --quiet "refs/heads/$BRANCH"; then
   echo "worktree-new: branch '$BRANCH' already exists" >&2; exit 1
 fi
 
-QT_SRC="$MAIN_REPO/plotjuggler_sdk/.qt"
-[[ -d "$QT_SRC/6.11.1/gcc_64" ]] ||
-  echo "worktree-new: WARNING: $QT_SRC/6.11.1/gcc_64 missing — run ./install_qt6.sh in the primary checkout" >&2
+# install_qt6.sh installs into the primary checkout's repo-root .qt; symlink the
+# worktree's .qt to it by ABSOLUTE path (a relative link would resolve into the
+# worktree's own empty submodule). The arch subfolder is host-specific.
+QT_SRC="$MAIN_REPO/.qt"
+[[ -d "$QT_SRC/6.11.1/${QT_ARCH_DIR}" ]] ||
+  echo "worktree-new: WARNING: $QT_SRC/6.11.1/${QT_ARCH_DIR} missing — run ./install_qt6.sh in the primary checkout" >&2
 
 echo "worktree-new: fetching origin..."
 git -C "$MAIN_REPO" fetch origin --quiet

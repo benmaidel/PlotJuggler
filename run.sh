@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/platform_env.sh"
 
-# Disable the IBus platform input context: it's loaded from the system Qt
-# install (often an older major version) and segfaults under Qt 6.11.
-export QT_IM_MODULE=""
+# Disable the IBus platform input context (Linux only): it's loaded from the
+# system Qt install (often an older major version) and segfaults under Qt 6.11.
+# macOS has no IBus and uses the Cocoa platform plugin, so leave the var alone.
+if [[ "$(uname -s)" != "Darwin" ]]; then
+  export QT_IM_MODULE=""
+fi
 
 # Native Wayland for ADS drag is patched in 3rdparty/Qt-Advanced-Docking/.
 # Uncomment the next line to fall back to XWayland if a regression appears.
@@ -15,7 +19,7 @@ export QT_IM_MODULE=""
 # scans it first, picks up the cert-only TLS backend there, then fails to load
 # its OpenSSL sibling (symbol mismatch against the newer libstdc++) and all
 # HTTPS traffic breaks — including the marketplace registry fetch.
-export QT_PLUGIN_PATH="${SCRIPT_DIR}/.qt/6.11.1/gcc_64/plugins"
+export QT_PLUGIN_PATH="${SCRIPT_DIR}/.qt/6.11.1/${QT_ARCH_DIR}/plugins"
 
 BIN="${SCRIPT_DIR}/build/pj_app/plotjuggler4"
 

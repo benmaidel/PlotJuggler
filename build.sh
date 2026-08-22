@@ -1,8 +1,20 @@
 #!/usr/bin/env bash
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+source "${SCRIPT_DIR}/platform_env.sh"
 
-QT_DIR="${SCRIPT_DIR}/.qt/6.11.1/gcc_64"
+QT_DIR="${SCRIPT_DIR}/.qt/6.11.1/${QT_ARCH_DIR}"
+
+# macOS FFmpeg: the Conan graph's VAAPI/libdrm options (forced on in
+# conanfile.txt for Linux GPU decode) are Linux-only and fail to resolve on
+# macOS, so override them off here. Video then decodes in software; VideoToolbox
+# HW decode is a future opt-in (ffmpeg/*:with_videotoolbox=True — FfmpegDecoder
+# picks it up at runtime with no C++ change). conanfile.txt is a static list with
+# no per-OS conditionals, so the override has to live at the invocation.
+CONAN_OS_ARGS=()
+if [[ "$(uname -s)" == "Darwin" ]]; then
+  CONAN_OS_ARGS+=(-o 'ffmpeg/*:with_vaapi=False' -o 'ffmpeg/*:with_libdrm=False')
+fi
 
 # `./build.sh --tsan` builds + runs the Qt-free foundation concurrency tests under
 # ThreadSanitizer in a separate build-tsan/ tree (the default build/ is untouched).
@@ -37,7 +49,8 @@ if [[ "$TSAN" == "1" ]]; then
   BUILD_DIR="${SCRIPT_DIR}/build-tsan"
 
   conan install "$SCRIPT_DIR" --output-folder="$BUILD_DIR" --build=missing \
-    -s build_type=RelWithDebInfo -s compiler.cppstd=20 -r conancenter
+    -s build_type=RelWithDebInfo -s compiler.cppstd=20 -r conancenter \
+    "${CONAN_OS_ARGS[@]+"${CONAN_OS_ARGS[@]}"}"
 
   # PJ4_BUILD_APP=OFF + building only the foundation test targets keeps Qt out of
   # the picture entirely (no Qt code is compiled), even though configure still
@@ -50,7 +63,7 @@ if [[ "$TSAN" == "1" ]]; then
     -DPJ4_BUILD_APP=OFF \
     "${CMAKE_CCACHE_ARGS[@]+"${CMAKE_CCACHE_ARGS[@]}"}"
 
-  cmake --build "$BUILD_DIR" --target "${TSAN_TESTS[@]}" -j "$(nproc)"
+  cmake --build "$BUILD_DIR" --target "${TSAN_TESTS[@]}" -j "$JOBS"
 
   # Run under ctest so the per-test CMake TIMEOUT catches a deadlock regression,
   # and so TSan's non-zero exit (it dies on the first report under halt_on_error)
@@ -68,7 +81,8 @@ BUILD_DIR="${SCRIPT_DIR}/build"
 # a user channel — those would shadow the stock recipes and drag a whole `@<org>`
 # dependency subtree into the graph. conancenter carries every PJ4 dependency.
 conan install "$SCRIPT_DIR" --output-folder="$BUILD_DIR" --build=missing \
-  -s build_type=RelWithDebInfo -s compiler.cppstd=20 -r conancenter
+  -s build_type=RelWithDebInfo -s compiler.cppstd=20 -r conancenter \
+  "${CONAN_OS_ARGS[@]+"${CONAN_OS_ARGS[@]}"}"
 
 cmake -S "$SCRIPT_DIR" -B "$BUILD_DIR" \
   -DCMAKE_TOOLCHAIN_FILE="$BUILD_DIR/conan_toolchain.cmake" \
@@ -76,4 +90,4 @@ cmake -S "$SCRIPT_DIR" -B "$BUILD_DIR" \
   -DCMAKE_PREFIX_PATH="${QT_DIR}" \
   "${CMAKE_CCACHE_ARGS[@]+"${CMAKE_CCACHE_ARGS[@]}"}"
 
-cmake --build "$BUILD_DIR" -j "$(nproc)"
+cmake --build "$BUILD_DIR" -j "$JOBS"
