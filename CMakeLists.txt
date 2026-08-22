@@ -49,6 +49,20 @@ else()
         -Wall -Wextra -Werror -Wshadow -Wnon-virtual-dtor -Wold-style-cast
         -Wcast-qual -Wconversion -Woverloaded-virtual -Wpedantic
     )
+    # macOS bring-up: Apple Clang surfaces diagnostics GCC/Linux-Clang don't, and
+    # -Werror would turn each into a hard failure before the port is warning-clean.
+    # Keep the full -W set (so warnings are still visible) but non-fatal on Apple.
+    # Re-tighten (drop this branch) once the macOS build is warning-clean.
+    if(APPLE)
+        list(REMOVE_ITEM PJ_WARNING_FLAGS -Werror)
+        # Clang promotes -Winvalid-constexpr to a DEFAULT error, independent of
+        # -Werror (so the removal above doesn't cover it). The vendored nanocdr
+        # header trips it (getCurrentEndianness() type-puns a union — legal at
+        # runtime, never in a constant expression; GCC doesn't diagnose it).
+        # Downgrade it globally so vendored + our code build. Applies to all
+        # targets since it's a compiler-level default, not tied to PJ_WARNING_FLAGS.
+        add_compile_options(-Wno-invalid-constexpr)
+    endif()
 endif()
 
 # Keep frame pointers in all PJ4-owned targets so `perf record --call-graph fp`
