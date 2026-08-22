@@ -66,7 +66,7 @@ through the **same** `PointCloudLayer` and `convertCanonical()` path as a raw cl
 layer, no separate widget.
 
 - **Formats:** `cloudini` (header-embedded schema; via `cloudini/1.2.2`) and `draco`
-  (`draco/1.5.6` — pinned to 1.5.6 to match the `assimp/5.4.3` glTF importer requirement;
+  (`draco/1.5.7` — pinned to match the `assimp/5.4.3` glTF importer requirement;
   see `conanfile.txt`). Plain `zstd_point_cloud_transport` is **out of scope** — its blob is
   not self-describing (it relies on layout fields the canonical object does not carry).
 - **Wire sources:** the ROS parser emits the canonical object for both
