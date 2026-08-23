@@ -11,6 +11,7 @@
 #include "pj_scene3d_widgets/rhi/rhi_axis_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_grid_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_hdr_target.h"
+#include "pj_scene3d_widgets/rhi/rhi_occupancy_grid_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_pointcloud_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_present_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_render_pass.h"
@@ -43,6 +44,8 @@ class RhiSceneViewWidget : public QRhiWidget {
   RhiPointcloudPass& pointcloudPass() { return pointcloud_pass_; }
   /// The TF parent-connection line pass.
   RhiTfConnectionsPass& tfConnectionsPass() { return tf_connections_pass_; }
+  /// The occupancy-grid / costmap pass.
+  RhiOccupancyGridPass& occupancyGridPass() { return occupancy_pass_; }
 
   /// Replace the camera model. The new model adopts the outgoing model's pose, so
   /// switching does not move the viewpoint.
@@ -95,6 +98,7 @@ class RhiSceneViewWidget : public QRhiWidget {
   RhiAxisPass axis_pass_;
   RhiPointcloudPass pointcloud_pass_;
   RhiTfConnectionsPass tf_connections_pass_;
+  RhiOccupancyGridPass occupancy_pass_;
 
   /// Off-screen multisample HDR chain the scene renders into, plus the fullscreen
   /// pass that composites it onto the widget target. When the chain cannot be

@@ -80,7 +80,10 @@ std::vector<IRhiRenderPass*> RhiSceneViewWidget::passes() {
   // lets them occlude it correctly rather than the reverse.
   // Grid and connection lines first (neither writes depth), then the opaque
   // cloud and triads so they occlude the annotations correctly.
-  return {&grid_pass_, &tf_connections_pass_, &pointcloud_pass_, &axis_pass_};
+  // Order matters. The occupancy map is a translucent ground overlay, so it is
+  // blended over the reference grid before any opaque geometry; the cloud and
+  // triads then depth-write over both.
+  return {&grid_pass_, &occupancy_pass_, &tf_connections_pass_, &pointcloud_pass_, &axis_pass_};
 }
 
 glm::mat4 RhiSceneViewWidget::buildViewProj(const QSize& pixel_size) const {

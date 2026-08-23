@@ -18,6 +18,7 @@
 #include <QColor>
 #include <QDeadlineTimer>
 #include <QImage>
+#include <QRect>
 #include <QSet>
 #include <QString>
 #include <cmath>
@@ -97,6 +98,46 @@ int main(int argc, char** argv) {
   view.pointcloudPass().setScalarRange(0.0F, 1.0F);
   view.pointcloudPass().setColormap(PJ::Colormap::kTurbo);
   view.pointcloudPass().setPointRadius(0.045F);
+
+  // Synthetic occupancy map: free interior, an occupied wall ring, a lethal blob,
+  // and an unknown (255) outer border so the transparent-unknown path is exercised.
+  {
+    const int gw = 120;
+    const int gh = 120;
+    std::vector<unsigned char> cells(static_cast<size_t>(gw) * gh, 0);
+    for (int r = 0; r < gh; ++r) {
+      for (int c = 0; c < gw; ++c) {
+        unsigned char v = 0;
+        const bool border = r < 8 || c < 8 || r >= gh - 8 || c >= gw - 8;
+        const bool wall = (r == 30 || r == 90) && c > 20 && c < 100;
+        const int dx = c - 75;
+        const int dy = r == 0 ? 0 : r - 60;
+        const bool blob = (dx * dx) + (dy * dy) < 100;
+        if (border) {
+          v = 255;  // unknown
+        } else if (wall || blob) {
+          v = 100;  // fully occupied
+        }
+        cells[(static_cast<size_t>(r) * gw) + c] = v;
+      }
+    }
+    auto& occ = view.occupancyGridPass();
+    occ.setGrid(cells.data(), gw, gh);
+    // Place a 12 m x 12 m map centred on the origin, just above z=0.
+    glm::mat4 model(1.0F);
+    model = glm::translate(model, glm::vec3(-6.0F, -6.0F, 0.01F));
+    model = glm::scale(model, glm::vec3(12.0F, 12.0F, 1.0F));
+    occ.setModelMatrix(model);
+    occ.setColorScheme(pj::scene3d::rhi::RhiOccupancyGridPass::ColorScheme::kCostmap);
+    occ.setOpacity(0.8F);
+    // Exercise the partial-update path the way a live map does: send ONLY the
+    // patch, so the pass re-uploads that rectangle instead of the whole grid.
+    // Carves a free corridor straight through the lethal blob.
+    const QRect patch_rect(20, 55, 80, 10);
+    const std::vector<unsigned char> patch(
+        static_cast<size_t>(patch_rect.width()) * patch_rect.height(), 0);
+    occ.updateRegion(patch_rect, patch.data());
+  }
   if (view.camera() != nullptr) {
     view.camera()->adoptState(referencePose());
   }
