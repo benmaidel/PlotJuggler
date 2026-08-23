@@ -30,6 +30,7 @@
 
 #include "pj_scene3d_core/poses_in_frame_render.h"
 #include "pj_scene3d_widgets/mesh_primitives.h"
+#include "pj_scene3d_widgets/rhi/rhi_marker_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_scene_view_widget.h"
 
 // Q_INIT_RESOURCE must sit at global scope: inside an anonymous namespace its
@@ -285,6 +286,74 @@ int main(int argc, char** argv) {
     frame_world = glm::translate(frame_world, glm::vec3(3.4F, -2.2F, 0.0F));
     frame_world = glm::rotate(frame_world, glm::radians(25.0F), glm::vec3(0.0F, 0.0F, 1.0F));
     poses.setFrameWorld(frame_world);
+  }
+
+  // Markers: one of every ported primitive type, laid out in a row so each is
+  // individually checkable. Two frames are used so the frame-index -> world
+  // resolution is exercised rather than everything sitting on the identity.
+  {
+    auto batch = std::make_shared<pj::scene3d::DecodedSceneEntities>();
+    batch->frames = {"markers_a", "markers_b"};
+
+    const auto place = [](float x, float y, float z) { return glm::translate(glm::mat4(1.0F), glm::vec3(x, y, z)); };
+
+    // Cubes: one opaque, one translucent (the translucent one must show all 12
+    // edges through itself, which is what the no-depth-write rule buys).
+    batch->cubes.push_back(
+        {place(-5.0F, -5.4F, 0.5F) * glm::scale(glm::mat4(1.0F), glm::vec3(0.9F)), {0.95F, 0.55F, 0.15F, 1.0F}, 0});
+    batch->cubes.push_back(
+        {place(-3.4F, -5.4F, 0.5F) * glm::scale(glm::mat4(1.0F), glm::vec3(0.9F)), {0.20F, 0.75F, 0.35F, 0.40F}, 0});
+    // Sphere, deliberately an ellipsoid so the non-uniform-scale path is covered.
+    batch->spheres.push_back(
+        {place(-1.8F, -5.4F, 0.5F) * glm::scale(glm::mat4(1.0F), glm::vec3(1.1F, 0.7F, 0.9F)),
+         {0.30F, 0.45F, 0.95F, 1.0F},
+         0});
+    // Cylinder, cone (top collapsed) and truncated cone — the taper path.
+    batch->cylinders.push_back({place(-0.4F, -5.4F, 0.5F), {0.85F, 0.30F, 0.75F, 1.0F}, 1.0F, 1.0F, 0});
+    batch->cylinders.push_back({place(0.8F, -5.4F, 0.5F), {0.90F, 0.75F, 0.20F, 1.0F}, 1.0F, 0.0F, 0});
+    batch->cylinders.push_back({place(2.0F, -5.4F, 0.5F), {0.25F, 0.80F, 0.80F, 1.0F}, 1.0F, 0.35F, 0});
+    // Arrow and an axes glyph, both on the SECOND frame.
+    batch->arrows.push_back({place(3.4F, -5.4F, 0.4F), {0.95F, 0.20F, 0.20F, 1.0F}, 0.9F, 0.12F, 0.35F, 0.26F, 1});
+    batch->axes.push_back({place(5.0F, -5.4F, 0.4F), 0.9F, 0.09F, 1});
+    // A line strip (pre-expanded to segment pairs) and a triangle fan.
+    {
+      pj::scene3d::MarkerLineBatch lines;
+      lines.model = place(-5.0F, -1.9F, 0.1F);
+      lines.color = {0.10F, 0.10F, 0.12F, 1.0F};
+      for (int i = 0; i < 24; ++i) {
+        const float t0 = static_cast<float>(i) * 0.28F;
+        const float t1 = static_cast<float>(i + 1) * 0.28F;
+        lines.vertices.push_back(glm::vec3(t0 * 0.4F, std::sin(t0) * 0.35F, 0.0F));
+        lines.vertices.push_back(glm::vec3(t1 * 0.4F, std::sin(t1) * 0.35F, 0.0F));
+      }
+      batch->lines.push_back(std::move(lines));
+    }
+    {
+      pj::scene3d::MarkerTriangleBatch tris;
+      tris.model = place(2.6F, -1.9F, 0.05F);
+      tris.color = {0.55F, 0.35F, 0.85F, 1.0F};
+      constexpr int kFan = 10;
+      for (int i = 0; i < kFan; ++i) {
+        const float a0 = static_cast<float>(i) * 0.55F;
+        const float a1 = static_cast<float>(i + 1) * 0.55F;
+        tris.vertices.push_back(glm::vec3(0.0F, 0.0F, 0.0F));
+        tris.vertices.push_back(glm::vec3(std::cos(a0), std::sin(a0), 0.0F));
+        tris.vertices.push_back(glm::vec3(std::cos(a1), std::sin(a1), 0.0F));
+        for (int k = 0; k < 3; ++k) {
+          tris.normals.push_back(glm::vec3(0.0F, 0.0F, 1.0F));
+        }
+      }
+      batch->triangles.push_back(std::move(tris));
+    }
+
+    auto& markers = view.markerPass();
+    markers.setActive(batch);
+    // Frame 0 sits at the origin; frame 1 is offset and yawed, so a broken
+    // frame-index lookup would misplace the arrow and axes visibly.
+    markers.setFrameTransforms(
+        {glm::mat4(1.0F), glm::rotate(
+                              glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 0.9F, 0.0F)), glm::radians(30.0F),
+                              glm::vec3(0.0F, 0.0F, 1.0F))});
   }
 
   if (view.camera() != nullptr) {

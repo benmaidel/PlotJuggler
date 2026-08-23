@@ -29,6 +29,7 @@ Ported so far:
 | Occupancy grid | `RhiOccupancyGridPass` | R8 texture, partial `updateRegion` uploads |
 | Voxel grid | `RhiVoxelGridPass` | 3D R32F texture, `texelFetch` in the *vertex* stage |
 | Meshes / PBR | `RhiMeshPass` | glTF metallic-roughness, 5 maps, analytic IBL |
+| Markers | `RhiMarkerPass` | SceneEntities primitives; flat-shaded annotation |
 
 Drive it with `demos/rhi_view.cpp` (`scene3d_rhi_view`), which renders one frame
 headlessly to a PNG for comparison against `tools/reference/`.
@@ -67,8 +68,7 @@ exactly the class of bug QRhi does not report:
    the end. The ported passes deliberately omit that step so the passthrough
    present looks right, so the operators and the per-pass linearization have to
    switch over together.
-2. Remaining geometry pass: markers (five programs, incl. replacing `glPolygonMode`
-   wireframe with real line geometry).
+2. *(Geometry passes are complete.)*
 3. Screen-space passes: SSAO and EDL. Both need the resolved single-sample depth
    the HDR chain already produces — `QRhi::ResolveDepthStencil` is supported on
    Metal, so the design carries over unchanged.
@@ -92,6 +92,11 @@ exactly the class of bug QRhi does not report:
   passes that produce those inputs are themselves unported. It also has no
   wide-gamut highlight rolloff yet — a specular highlight clips instead of being
   tonemapped, which is a direct consequence of item 1 above.
+- `RhiMarkerPass` does not draw `MarkerText`; neither does the GL pass, so this is
+  not a regression. `MarkerLineBatch::thickness` is ignored, as in GL — Metal has no
+  wide-line primitive and a core-profile GL context rejects `glLineWidth > 1`.
+  Wireframe also does not apply to arrows/axes, where GL's `glPolygonMode` did
+  affect them.
 
 ### RhiMeshPass — two structural departures from the GL pass
 
@@ -117,6 +122,30 @@ touching the other passes:
 
 Note also that `slots` is a Qt keyword macro (`qobjectdefs.h`) — naming a local
 variable that produces a baffling "expected unqualified-id".
+
+### RhiMarkerPass — three departures from the GL pass
+
+- **Wireframe is real line geometry.** `glPolygonMode` has no QRhi *or* Metal
+  equivalent, so every unit mesh carries a second LINES index buffer derived from
+  its triangles, and triangle batches expand to segments on the CPU (they are
+  re-streamed each frame anyway, so changing topology there is free).
+- **Line and triangle batches merge into one draw each.** Their world placement is
+  baked into the vertices during staging rather than passed as a per-batch matrix,
+  which lets every batch share one buffer. GL issues a draw per batch.
+- **Pipelines come from a small cache** keyed by what actually varies (topology,
+  culling, depth write, blending, depth bias). QRhi bakes all of that into
+  immutable pipeline objects, so the GL pass's ~15 `glEnable`/`glDisable`
+  transitions would otherwise become that many named members.
+
+**A uniform-block trap worth remembering.** The arrow and axes markers reuse the
+shared `arrow.{vert,frag}` off the marker pass's own uniform buffer, so
+`MarkerUbo` deliberately starts with the same two matrices as `ArrowUbo`. A shader
+may declare a *smaller* block than the buffer holds, but not a larger one: while
+`MarkerUbo` was 96 bytes the arrow shaders read `frame_world` from bytes 64-127,
+got zeros, and multiplied every vertex by a zero matrix — so all arrows collapsed
+to a degenerate point, with no validation error and no warning anywhere. Isolating
+the pass (temporarily returning only it from `passes()`) is what found it, and is
+the fastest tool for this class of bug.
 
 **Two QRhi rules this port learned the hard way**, both silently accepted by Metal
 and both producing convincing-but-wrong output rather than an error:

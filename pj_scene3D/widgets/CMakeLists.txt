@@ -19,6 +19,7 @@ set(PJ_SCENE3D_WIDGETS_SOURCES
   src/rhi/rhi_grid_pass.cpp
   src/rhi/rhi_hdr_target.cpp
   src/rhi/rhi_pointcloud_pass.cpp
+  src/rhi/rhi_marker_pass.cpp
   src/rhi/rhi_mesh_pass.cpp
   src/rhi/rhi_occupancy_grid_pass.cpp
   src/rhi/rhi_poses_pass.cpp
@@ -78,6 +79,7 @@ set(PJ_SCENE3D_WIDGETS_SOURCES
   include/pj_scene3d_widgets/rhi/rhi_grid_pass.h
   include/pj_scene3d_widgets/rhi/rhi_hdr_target.h
   include/pj_scene3d_widgets/rhi/rhi_pointcloud_pass.h
+  include/pj_scene3d_widgets/rhi/rhi_marker_pass.h
   include/pj_scene3d_widgets/rhi/rhi_mesh_pass.h
   include/pj_scene3d_widgets/rhi/rhi_occupancy_grid_pass.h
   include/pj_scene3d_widgets/rhi/rhi_arrow_shading.h
@@ -157,6 +159,11 @@ qt6_add_shaders(pj_scene3d_widgets "scene3d_shaders"
     shaders/arrow.frag
     shaders/mesh.vert
     shaders/mesh.frag
+    shaders/marker_solid.vert
+    shaders/marker_cylinder.vert
+    shaders/marker_edge.vert
+    shaders/marker_flat.vert
+    shaders/marker_flat.frag
     shaders/voxel.vert
     shaders/voxel.frag
     shaders/occupancy.vert

@@ -83,8 +83,8 @@ std::vector<IRhiRenderPass*> RhiSceneViewWidget::passes() {
   // own opaque-then-translucent split internally). The gizmos come last: pose
   // triads blend (they honour an opacity knob), so they must see the final depth
   // buffer to be occluded correctly.
-  return {&grid_pass_,  &occupancy_pass_,  &tf_connections_pass_, &mesh_pass_,
-          &voxel_pass_, &pointcloud_pass_, &axis_pass_,           &poses_pass_};
+  return {&grid_pass_,       &occupancy_pass_, &tf_connections_pass_, &mesh_pass_, &voxel_pass_,
+          &pointcloud_pass_, &marker_pass_,    &axis_pass_,           &poses_pass_};
 }
 
 glm::mat4 RhiSceneViewWidget::buildViewProj(const QSize& pixel_size) const {

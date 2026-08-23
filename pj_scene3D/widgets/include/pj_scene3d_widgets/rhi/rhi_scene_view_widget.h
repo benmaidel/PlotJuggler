@@ -11,6 +11,7 @@
 #include "pj_scene3d_widgets/rhi/rhi_axis_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_grid_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_hdr_target.h"
+#include "pj_scene3d_widgets/rhi/rhi_marker_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_mesh_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_occupancy_grid_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_pointcloud_pass.h"
@@ -70,6 +71,10 @@ class RhiSceneViewWidget : public QRhiWidget {
   /// The URDF / scene mesh pass (glTF metallic-roughness shading).
   RhiMeshPass& meshPass() {
     return mesh_pass_;
+  }
+  /// The SceneEntities / marker pass.
+  RhiMarkerPass& markerPass() {
+    return marker_pass_;
   }
 
   /// Replace the camera model. The new model adopts the outgoing model's pose, so
@@ -135,6 +140,7 @@ class RhiSceneViewWidget : public QRhiWidget {
   RhiVoxelGridPass voxel_pass_;
   RhiPosesPass poses_pass_;
   RhiMeshPass mesh_pass_;
+  RhiMarkerPass marker_pass_;
 
   /// Off-screen multisample HDR chain the scene renders into, plus the fullscreen
   /// pass that composites it onto the widget target. When the chain cannot be

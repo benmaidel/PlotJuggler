@@ -202,6 +202,13 @@ full mechanism.
   the data-source plugin's manifest `name` and a config payload carrying its own
   absolute `filepath`.
 
+The QRhi/Metal port has its own verification harness: `demos/rhi_view.cpp`
+(`scene3d_rhi_view`) renders one frame headlessly to a PNG and reports coverage and
+tone counts. When a ported pass draws nothing, temporarily returning only that pass
+from `RhiSceneViewWidget::passes()` isolates it — that is what surfaced the marker
+uniform-block bug documented in `docs/ARCHITECTURE.md`. The ported passes have no
+`ctest` coverage yet; an offscreen-QRhi fixture is the open gap.
+
 # Validation
 
 Before any commit, build and run the module's tests and check that they all pass.
