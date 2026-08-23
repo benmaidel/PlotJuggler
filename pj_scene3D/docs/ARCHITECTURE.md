@@ -20,7 +20,8 @@ Ported so far:
 | Area | Class | Notes |
 |---|---|---|
 | Host | `RhiSceneViewWidget` | camera, depth, clip-space correction, pass ordering |
-| Off-screen chain | `RhiHdrTarget`, `RhiPresentPass` | MSAA RGBA16F + resolved depth |
+| Off-screen chain | `RhiHdrTarget` | MSAA RGBA16F + multisample depth texture + resolves |
+| Composite / present | `RhiPresentPass` | exposure -> tonemap -> saturation -> sRGB encode |
 | Ground grid | `RhiGridPass` | shares `shaders/lines.*` |
 | TF connection lines | `RhiTfConnectionsPass` | shares `shaders/lines.*` |
 | TF triads | `RhiAxisPass` | instanced; shares `shaders/arrow.*` |
@@ -56,19 +57,8 @@ exactly the class of bug QRhi does not report:
 
 **Still to do**, roughly in order of value:
 
-1. **Composite operators.** The present pass is deliberately a passthrough with
-   exposure only. The GL composite is exposure → tonemap (None/ACES/AgX/Neutral)
-   → saturation → manual sRGB encode, plus the far-plane background bypass and the
-   SSAO/EDL multiply. Until these land, QRhi colours are *correct* but will not
-   match the GL renderer's look. Note the ordering is load-bearing: ACES
-   desaturates, which is why saturation (1.3) follows it rather than preceding it.
-
-   This is **coupled across every pass**: the GL fragment shaders linearize their
-   output (`pow(color, 2.2)`) precisely because the composite re-encodes sRGB at
-   the end. The ported passes deliberately omit that step so the passthrough
-   present looks right, so the operators and the per-pass linearization have to
-   switch over together.
-2. *(Geometry passes are complete.)*
+1. The SSAO/EDL multiplies inside the composite, which need those passes first.
+2. *(Geometry passes and the composite operators are complete.)*
 3. Screen-space passes: SSAO and EDL. Both need the resolved single-sample depth
    the HDR chain already produces — `QRhi::ResolveDepthStencil` is supported on
    Metal, so the design carries over unchanged.
@@ -76,6 +66,39 @@ exactly the class of bug QRhi does not report:
    fallback for backends without compute.
 5. Wiring `RhiSceneViewWidget` into `Scene3DDockWidget` behind a flag; today only
    the demo drives it.
+
+### The composite chain, and why it touches every pass
+
+`RhiPresentPass` applies exposure → tonemap (None/ACES/AgX/Khronos PBR Neutral) →
+saturation → the single manual sRGB encode. The ordering is load-bearing: ACES
+desaturates, so saturation follows it rather than pre-boosting colour into the
+tonemap's shoulder.
+
+This is what makes the renderer linear-light, and that is a **whole-renderer
+invariant, not a property of one pass**: every geometry shader writes LINEAR colour
+into the HDR target precisely because the encode happens here, exactly once. Pass
+*APIs* still take display-referred sRGB colours — each fragment shader converts at
+the last moment — so callers are unaffected. The background is likewise cleared
+already-linearized and then bypasses grading, so the two conversions cancel and the
+theme colour survives byte-exact.
+
+Two bypasses decide which pixels get the filmic look:
+
+- **Far-plane background**, via the resolved depth buffer. Grading the background
+  would shift the theme colour.
+- **Per-pixel annotation marker**, carried in the HDR target's ALPHA channel. This
+  is the subtle one: in that target alpha is *not* opacity. Data pixels drive it to
+  1 and take the filmic look; annotation geometry (TF triads, TF connection lines,
+  pose gizmos) drives it to 0 and passes through ungraded, so magenta connection
+  lines and axis colours stay vivid instead of being desaturated by AgX. The MSAA
+  resolve averages the marker, which feathers the seam.
+
+  How a pass sets it depends on whether it blends. Un-blended passes simply write
+  the marker as their fragment alpha — which is why `RhiAxisPass`'s axis colours and
+  `RhiTfConnectionsPass`'s magenta carry **alpha 0**, and why enabling blending on
+  either would silently turn that marker into coverage. Blended passes instead
+  choose alpha blend *factors*: `(One, OneMinusSrcAlpha)` raises the marker (data),
+  `(Zero, OneMinusSrcAlpha)` drives it down by coverage (annotation).
 
 **Known deviations from the GL renderer** (deliberate, revisit at parity):
 
@@ -89,9 +112,12 @@ exactly the class of bug QRhi does not report:
   pass: translucent arms occlude each other in draw order. Acceptable for gizmos,
   and it avoids a per-frame sort over a particle cloud.
 - `RhiMeshPass` omits shadow receive and the R8 "is-mesh" mask for EDL, because the
-  passes that produce those inputs are themselves unported. It also has no
-  wide-gamut highlight rolloff yet — a specular highlight clips instead of being
-  tonemapped, which is a direct consequence of item 1 above.
+  passes that produce those inputs are themselves unported.
+- The direct-to-widget fallback (used only when the HDR chain cannot be created at
+  all) has **no composite**, so the linear-light output the passes write is never
+  encoded and the scene renders dark. GL sidesteps this by not linearizing on its
+  equivalent path. Acceptable while that path is a "beats a blank dock" last
+  resort, but it is a real defect if it ever becomes reachable in practice.
 - `RhiMarkerPass` does not draw `MarkerText`; neither does the GL pass, so this is
   not a regression. `MarkerLineBatch::thickness` is ignored, as in GL — Metal has no
   wide-line primitive and a core-profile GL context rejects `glLineWidth > 1`.
@@ -161,6 +187,16 @@ and both producing convincing-but-wrong output rather than an error:
 Also note `clipSpaceCorrMatrix()` fixes NDC (Y direction *and* depth range) for
 geometry, but says nothing about how a rendered texture is later **sampled**: the
 present pass needs a separate flip driven by `QRhi::isYUpInFramebuffer()`.
+
+A third such trap, found when the background bypass read all-zero depth: **QRhi can
+only resolve depth out of a multisample depth TEXTURE**. `RhiHdrTarget` originally
+attached depth as a `QRhiRenderBuffer`, and against that
+`setDepthResolveTexture()` is accepted, reports no error, and silently never
+writes — so `resolvedDepth()` handed out a texture that was uniformly 0. The chain
+now attaches a multisample `D32F` texture (gated on `QRhi::MultisampleTexture`)
+and keeps the renderbuffer only as a no-resolved-depth fallback. Note that
+`isFeatureSupported(ResolveDepthStencil)` returning true says nothing about whether
+your attachment can actually be resolved from.
 
 ## Rendering pipeline
 

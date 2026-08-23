@@ -30,7 +30,9 @@ class RhiGridPass final : public IRhiRenderPass {
   /// number of cells per axis. Changing either re-tessellates on the next
   /// prepare(); it does not touch the pipeline.
   void setGeometry(float extent_m, int divisions);
-  void setLineColor(const glm::vec4& rgba) { line_color_ = rgba; }
+  void setLineColor(const glm::vec4& rgba) {
+    line_color_ = rgba;
+  }
 
  private:
   /// Mirrors the LinesUbo block in shaders/lines.{vert,frag} (shared with the TF
@@ -53,6 +55,9 @@ class RhiGridPass final : public IRhiRenderPass {
 
   float extent_m_ = 20.0F;
   int divisions_ = 20;
+  /// Alpha 1 marks the grid as DATA for the composite's grade marker (it is not
+  /// opacity — nothing blends this pass), matching the GL renderer, where the grid
+  /// draws under the data blend and is graded. See lines.frag.
   glm::vec4 line_color_{0.62F, 0.62F, 0.64F, 1.0F};
 
   /// Vertex count currently resident in vbo_; 0 until the first upload.

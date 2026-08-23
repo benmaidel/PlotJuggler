@@ -32,5 +32,5 @@ void main() {
   // shape, so faces must stay distinguishable from every orbit angle.
   const vec3 light_dir = normalize(vec3(0.35, 0.45, 0.82));
   const float lambert = max(dot(normalize(v_normal), light_dir), 0.0);
-  frag_color = vec4(rgb * (0.55 + (0.45 * lambert)), 1.0);
+  frag_color = vec4(pow(max(rgb * (0.55 + (0.45 * lambert)), vec3(0.0)), vec3(2.2)), 1.0);
 }

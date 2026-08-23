@@ -39,10 +39,15 @@ glm::mat4 axisRotation(int axis) {
   }
 }
 
+// Alpha is 0 on purpose. Nothing blends this pass, so it is not opacity: it is the
+// composite's per-pixel grade marker, and 0 marks the triads as annotation so their
+// axis colours stay flat and vivid instead of being desaturated by the tonemap.
+// (The marker pass draws its arrows through the same shader with alpha 1, as those
+// count as data — see arrow.frag.)
 constexpr float kAxisColors[3][4] = {
-    {0.90F, 0.15F, 0.15F, 1.0F},  // X
-    {0.15F, 0.75F, 0.20F, 1.0F},  // Y
-    {0.20F, 0.35F, 0.95F, 1.0F},  // Z
+    {0.90F, 0.15F, 0.15F, 0.0F},  // X
+    {0.15F, 0.75F, 0.20F, 0.0F},  // Y
+    {0.20F, 0.35F, 0.95F, 0.0F},  // Z
 };
 
 }  // namespace

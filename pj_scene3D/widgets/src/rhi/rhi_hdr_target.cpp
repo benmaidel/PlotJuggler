@@ -52,11 +52,28 @@ bool RhiHdrTarget::ensure(QRhi& rhi, const QSize& pixel_size, int desired_sample
     return false;
   }
 
-  msaa_depth_ = rhi.newRenderBuffer(QRhiRenderBuffer::DepthStencil, pixel_size, samples_);
-  if (msaa_depth_ == nullptr || !msaa_depth_->create()) {
-    qCWarning(lcRhiHdr) << "MSAA depth buffer creation failed";
-    release();
-    return false;
+  // Depth is attached as a multisample TEXTURE, not a renderbuffer, whenever the
+  // backend allows it. That is not a style choice: QRhi can only resolve depth out
+  // of a depth texture, so with a renderbuffer here setDepthResolveTexture() below
+  // is silently ignored and the resolve target stays all zeros — which reads as
+  // "every pixel is at the near plane" to anything sampling it.
+  const bool want_depth_texture = samples_ > 1 && rhi.isFeatureSupported(QRhi::MultisampleTexture) &&
+                                  rhi.isFeatureSupported(QRhi::ResolveDepthStencil);
+  if (want_depth_texture) {
+    msaa_depth_tex_ = rhi.newTexture(QRhiTexture::D32F, pixel_size, samples_, QRhiTexture::RenderTarget);
+    if (msaa_depth_tex_ == nullptr || !msaa_depth_tex_->create()) {
+      delete msaa_depth_tex_;
+      msaa_depth_tex_ = nullptr;
+      qCWarning(lcRhiHdr) << "multisample depth texture creation failed; falling back to a renderbuffer";
+    }
+  }
+  if (msaa_depth_tex_ == nullptr) {
+    msaa_depth_ = rhi.newRenderBuffer(QRhiRenderBuffer::DepthStencil, pixel_size, samples_);
+    if (msaa_depth_ == nullptr || !msaa_depth_->create()) {
+      qCWarning(lcRhiHdr) << "MSAA depth buffer creation failed";
+      release();
+      return false;
+    }
   }
 
   // Resolve destination: single-sample, sampled by the present pass. Needs the
@@ -73,12 +90,16 @@ bool RhiHdrTarget::ensure(QRhi& rhi, const QSize& pixel_size, int desired_sample
 
   QRhiTextureRenderTargetDescription desc;
   desc.setColorAttachments({color});
-  desc.setDepthStencilBuffer(msaa_depth_);
+  if (msaa_depth_tex_ != nullptr) {
+    desc.setDepthTexture(msaa_depth_tex_);
+  } else {
+    desc.setDepthStencilBuffer(msaa_depth_);
+  }
 
-  // Depth resolve is what SSAO/EDL will sample. Only request it where the backend
-  // supports it; without it the chain still renders, the screen-space passes just
-  // have no depth source yet.
-  if (samples_ > 1 && rhi.isFeatureSupported(QRhi::ResolveDepthStencil)) {
+  // The resolved single-sample depth: the composite's far-plane background bypass
+  // samples it today, and SSAO/EDL will. Only possible alongside the multisample
+  // depth texture above (see the comment there).
+  if (msaa_depth_tex_ != nullptr) {
     resolve_depth_ = rhi.newTexture(QRhiTexture::D32F, pixel_size, 1, QRhiTexture::RenderTarget);
     if (resolve_depth_ != nullptr && resolve_depth_->create()) {
       desc.setDepthResolveTexture(resolve_depth_);
@@ -122,6 +143,8 @@ void RhiHdrTarget::release() {
   resolve_color_ = nullptr;
   delete msaa_depth_;
   msaa_depth_ = nullptr;
+  delete msaa_depth_tex_;
+  msaa_depth_tex_ = nullptr;
   delete msaa_color_;
   msaa_color_ = nullptr;
   size_ = QSize();

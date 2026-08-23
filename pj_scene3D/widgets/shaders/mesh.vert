@@ -25,7 +25,7 @@ layout(std140, binding = 0) uniform SceneUbo {
   vec4 camera_pos;      // .xyz world-space eye; .w unused
   vec4 key_light_dir;   // .xyz unit direction TO the key light; .w unused
   vec4 light_scales;    // ambient, direct(key), fill, env_intensity
-  vec4 render_flags;    // srgb_encode, unused x3
+  vec4 render_flags;    // reserved (SSAO/EDL strengths)
 };
 
 layout(std140, binding = 1) uniform DrawUbo {

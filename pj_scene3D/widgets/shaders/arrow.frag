@@ -20,5 +20,7 @@ void main() {
   const vec3 light_dir = normalize(vec3(0.4, 0.5, 0.75));
   const float lambert = max(dot(normalize(v_normal), light_dir), 0.0);
   const float shade = 0.55 + (0.45 * lambert);
-  frag_color = vec4(v_color.rgb * shade, v_color.a);
+  // The alpha is the composite's grade marker, not opacity: the TF triads pass 0 so
+  // their axis colours bypass the tonemap, while marker arrows pass 1 (data).
+  frag_color = vec4(pow(max(v_color.rgb * shade, vec3(0.0)), vec3(2.2)), v_color.a);
 }

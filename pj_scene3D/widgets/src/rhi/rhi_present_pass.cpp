@@ -34,6 +34,18 @@ void RhiPresentPass::setSourceTexture(QRhiTexture* texture) {
   bindings_dirty_ = true;
 }
 
+void RhiPresentPass::setDepthTexture(QRhiTexture* texture) {
+  if (depth_ == texture) {
+    return;
+  }
+  depth_ = texture;
+  bindings_dirty_ = true;
+}
+
+void RhiPresentPass::setCompositeParams(const CompositeParams& params) {
+  params_ = params;
+}
+
 bool RhiPresentPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd, int sample_count) {
   if (pipeline_ != nullptr && rhi_ == &rhi && sample_count_ == sample_count) {
     return true;
@@ -58,9 +70,18 @@ bool RhiPresentPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd, int sa
   // Linear filtering so a supersampled chain (render scale > 1) box-averages on
   // the way down; ClampToEdge because the fullscreen triangle never samples
   // outside [0,1].
-  sampler_ = rhi.newSampler(QRhiSampler::Linear, QRhiSampler::Linear, QRhiSampler::None, QRhiSampler::ClampToEdge,
-                            QRhiSampler::ClampToEdge);
+  sampler_ = rhi.newSampler(
+      QRhiSampler::Linear, QRhiSampler::Linear, QRhiSampler::None, QRhiSampler::ClampToEdge, QRhiSampler::ClampToEdge);
   if (!sampler_->create()) {
+    release();
+    return false;
+  }
+  // Depth is sampled NEAREST: filtering it would interpolate across a silhouette
+  // and smear the far-plane comparison into a halo around every object edge.
+  depth_sampler_ = rhi.newSampler(
+      QRhiSampler::Nearest, QRhiSampler::Nearest, QRhiSampler::None, QRhiSampler::ClampToEdge,
+      QRhiSampler::ClampToEdge);
+  if (depth_sampler_ == nullptr || !depth_sampler_->create()) {
     release();
     return false;
   }
@@ -76,13 +97,23 @@ bool RhiPresentPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd, int sa
     release();
     return false;
   }
+  // A colour stand-in also serves the depth slot: the binding only has to be
+  // layout-compatible, and when no real depth is bound the shader's has_depth flag
+  // keeps it from ever being sampled.
+  depth_placeholder_tex_ = rhi.newTexture(QRhiTexture::R16F, QSize(1, 1));
+  if (depth_placeholder_tex_ == nullptr || !depth_placeholder_tex_->create()) {
+    release();
+    return false;
+  }
 
   srb_ = rhi.newShaderResourceBindings();
   srb_->setBindings({
       QRhiShaderResourceBinding::uniformBuffer(
           0, QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage, ubo_),
-      QRhiShaderResourceBinding::sampledTexture(1, QRhiShaderResourceBinding::FragmentStage, placeholder_tex_,
-                                                sampler_),
+      QRhiShaderResourceBinding::sampledTexture(
+          1, QRhiShaderResourceBinding::FragmentStage, placeholder_tex_, sampler_),
+      QRhiShaderResourceBinding::sampledTexture(
+          2, QRhiShaderResourceBinding::FragmentStage, depth_placeholder_tex_, depth_sampler_),
   });
   if (!srb_->create()) {
     release();
@@ -125,6 +156,9 @@ void RhiPresentPass::prepare(QRhiResourceUpdateBatch& updates, const RhiFrameCon
         QRhiShaderResourceBinding::uniformBuffer(
             0, QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage, ubo_),
         QRhiShaderResourceBinding::sampledTexture(1, QRhiShaderResourceBinding::FragmentStage, source_, sampler_),
+        QRhiShaderResourceBinding::sampledTexture(
+            2, QRhiShaderResourceBinding::FragmentStage, depth_ != nullptr ? depth_ : depth_placeholder_tex_,
+            depth_sampler_),
     });
     if (!srb_->create()) {
       return;
@@ -133,8 +167,11 @@ void RhiPresentPass::prepare(QRhiResourceUpdateBatch& updates, const RhiFrameCon
   }
 
   PresentUbo ubo{};
-  ubo.exposure = exposure_;
+  ubo.exposure = params_.exposure;
   ubo.flip_v = flip_v_ ? 1.0F : 0.0F;
+  ubo.tonemap_mode = params_.tonemap_mode;
+  ubo.saturation = params_.saturation;
+  ubo.has_depth = depth_ != nullptr ? 1.0F : 0.0F;
   updates.updateDynamicBuffer(ubo_, 0, sizeof(PresentUbo), &ubo);
 }
 
@@ -156,6 +193,10 @@ void RhiPresentPass::release() {
   sampler_ = nullptr;
   delete placeholder_tex_;
   placeholder_tex_ = nullptr;
+  delete depth_placeholder_tex_;
+  depth_placeholder_tex_ = nullptr;
+  delete depth_sampler_;
+  depth_sampler_ = nullptr;
   delete ubo_;
   ubo_ = nullptr;
   source_ = nullptr;

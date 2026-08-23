@@ -76,6 +76,11 @@ class RhiSceneViewWidget : public QRhiWidget {
   RhiMarkerPass& markerPass() {
     return marker_pass_;
   }
+  /// The composite / tonemap present pass, which owns the look knobs (tonemap
+  /// mode, exposure, saturation) and the renderer's single sRGB encode.
+  RhiPresentPass& presentPass() {
+    return present_pass_;
+  }
 
   /// Replace the camera model. The new model adopts the outgoing model's pose, so
   /// switching does not move the viewpoint.

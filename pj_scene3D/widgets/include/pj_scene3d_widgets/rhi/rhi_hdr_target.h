@@ -2,8 +2,9 @@
 // Copyright 2026 Davide Faconti
 // SPDX-License-Identifier: MPL-2.0
 
-#include <QSize>
 #include <rhi/qrhi.h>
+
+#include <QSize>
 
 namespace pj::scene3d::rhi {
 
@@ -18,11 +19,13 @@ namespace pj::scene3d::rhi {
 /// sampleCount 1 for its own target, so MSAA must live on a chain this class owns
 /// rather than being requested from the widget.
 ///
-/// The resolved depth texture is the piece SSAO and EDL will need — they sample
-/// single-sample depth — and it is why the design is viable at all: QRhi gained
-/// depth resolve (QRhi::ResolveDepthStencil) which older versions lacked. It is
-/// requested only when the backend reports that feature; everything else still
-/// works without it.
+/// The resolved depth texture is sampled by the composite's background bypass and
+/// is the piece SSAO and EDL will need. Getting it requires attaching depth as a
+/// multisample TEXTURE rather than a renderbuffer: QRhi can only resolve depth out
+/// of a texture, and with a renderbuffer setDepthResolveTexture() is accepted but
+/// silently does nothing, leaving the resolve target all zeros. The chain falls
+/// back to a renderbuffer (and no resolved depth) where multisample textures or
+/// depth resolve are unsupported; everything else still works.
 class RhiHdrTarget {
  public:
   RhiHdrTarget() = default;
@@ -38,19 +41,31 @@ class RhiHdrTarget {
 
   void release();
 
-  [[nodiscard]] bool ready() const { return render_target_ != nullptr; }
-  [[nodiscard]] QRhiTextureRenderTarget* renderTarget() const { return render_target_; }
-  [[nodiscard]] QRhiRenderPassDescriptor* renderPassDescriptor() const { return rpd_; }
+  [[nodiscard]] bool ready() const {
+    return render_target_ != nullptr;
+  }
+  [[nodiscard]] QRhiTextureRenderTarget* renderTarget() const {
+    return render_target_;
+  }
+  [[nodiscard]] QRhiRenderPassDescriptor* renderPassDescriptor() const {
+    return rpd_;
+  }
 
   /// Single-sample colour the present pass samples. Null until ensure() succeeds.
-  [[nodiscard]] QRhiTexture* resolvedColor() const { return resolve_color_; }
+  [[nodiscard]] QRhiTexture* resolvedColor() const {
+    return resolve_color_;
+  }
   /// Single-sample depth for future screen-space passes; null when the backend
   /// cannot resolve depth.
-  [[nodiscard]] QRhiTexture* resolvedDepth() const { return resolve_depth_; }
+  [[nodiscard]] QRhiTexture* resolvedDepth() const {
+    return resolve_depth_;
+  }
 
   /// Sample count actually in use — may be below the requested value, since QRhi
   /// only guarantees what QRhi::supportedSampleCounts() reports.
-  [[nodiscard]] int sampleCount() const { return samples_; }
+  [[nodiscard]] int sampleCount() const {
+    return samples_;
+  }
 
  private:
   QRhi* rhi_ = nullptr;
@@ -58,6 +73,9 @@ class RhiHdrTarget {
   int samples_ = 1;
 
   QRhiTexture* msaa_color_ = nullptr;
+  /// Multisample depth as a texture — the only form QRhi can resolve from. Mutually
+  /// exclusive with msaa_depth_, which is the fallback when that is unavailable.
+  QRhiTexture* msaa_depth_tex_ = nullptr;
   QRhiRenderBuffer* msaa_depth_ = nullptr;
   QRhiTexture* resolve_color_ = nullptr;
   QRhiTexture* resolve_depth_ = nullptr;

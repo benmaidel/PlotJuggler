@@ -37,5 +37,5 @@ void main() {
   // from the view direction, so a dense cloud reads as volumetric instead of flat.
   const float z = sqrt(max(1.0 - r2, 0.0));
   const float shade = 0.55 + (0.45 * z);
-  frag_color = vec4(rgb * shade, 1.0);
+  frag_color = vec4(pow(max(rgb * shade, vec3(0.0)), vec3(2.2)), 1.0);
 }

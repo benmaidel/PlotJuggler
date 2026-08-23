@@ -103,7 +103,12 @@ bool RhiPosesPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd, int samp
   blend.enable = true;
   blend.srcColor = QRhiGraphicsPipeline::SrcAlpha;
   blend.dstColor = QRhiGraphicsPipeline::OneMinusSrcAlpha;
-  blend.srcAlpha = QRhiGraphicsPipeline::One;
+  // Annotation alpha factors (Zero, OneMinusSrcAlpha): RGB blends normally on the
+  // opacity, while the alpha channel — the composite's grade marker — is DRIVEN
+  // DOWN by the gizmo's coverage. A fully opaque arm therefore marks its pixels as
+  // annotation (0) and bypasses the tonemap, and a translucent one feathers between
+  // the two. Data passes use (One, OneMinusSrcAlpha) instead, which raises it.
+  blend.srcAlpha = QRhiGraphicsPipeline::Zero;
   blend.dstAlpha = QRhiGraphicsPipeline::OneMinusSrcAlpha;
   pipeline_->setTargetBlends({blend});
 

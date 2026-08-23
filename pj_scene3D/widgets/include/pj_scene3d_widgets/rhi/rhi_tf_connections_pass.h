@@ -28,9 +28,13 @@ class RhiTfConnectionsPass final : public IRhiRenderPass {
   /// Endpoints as consecutive pairs: [a0, b0, a1, b1, ...]. An odd trailing
   /// element is ignored. Empty clears the pass.
   void setSegments(std::vector<glm::vec3> endpoints);
-  void setColor(const glm::vec4& rgba) { color_ = rgba; }
+  void setColor(const glm::vec4& rgba) {
+    color_ = rgba;
+  }
 
-  [[nodiscard]] int segmentCount() const { return vertex_count_ / 2; }
+  [[nodiscard]] int segmentCount() const {
+    return vertex_count_ / 2;
+  }
 
  private:
   /// Mirrors the LinesUbo block in shaders/lines.{vert,frag}.
@@ -50,7 +54,11 @@ class RhiTfConnectionsPass final : public IRhiRenderPass {
 
   std::vector<glm::vec3> endpoints_;
   /// Magenta by default, matching the OpenGL renderer's connection lines.
-  glm::vec4 color_{0.85F, 0.30F, 0.85F, 1.0F};
+  /// Magenta, with ALPHA 0 on purpose. Nothing blends this pass, so the alpha is
+  /// not opacity — it is the composite's per-pixel grade marker, and 0 marks these
+  /// lines as annotation so the tonemap leaves their magenta alone (AgX in
+  /// particular desaturates it badly). See lines.frag.
+  glm::vec4 color_{0.85F, 0.30F, 0.85F, 0.0F};
 
   int vertex_count_ = 0;
   int vertex_capacity_ = 0;

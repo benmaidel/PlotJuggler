@@ -71,11 +71,6 @@ class RhiMeshPass final : public IRhiRenderPass {
   /// bucket a draw lands in.
   void setShadingParams(const MeshShadingParams& params);
 
-  /// While the present pass is a passthrough, the shader must encode sRGB itself.
-  /// Clear this when the composite operators land — the shading math does not
-  /// change, only who applies the transfer function.
-  void setSrgbEncode(bool enable);
-
  private:
   /// std140 layout of the shaders' `SceneUbo` (once per frame).
   struct SceneUbo {
@@ -84,7 +79,8 @@ class RhiMeshPass final : public IRhiRenderPass {
     float key_light_dir[4];
     /// ambient, direct (key), fill, env_intensity.
     float light_scales[4];
-    /// srgb_encode, then padding.
+    /// Reserved. Held for the SSAO/EDL strengths that land with those passes; the
+    /// shader must still declare it so the block layout stays fixed.
     float render_flags[4];
   };
   static_assert(sizeof(SceneUbo) == 128);
@@ -211,7 +207,6 @@ class RhiMeshPass final : public IRhiRenderPass {
   std::vector<std::byte> draw_ubo_staging_;
 
   MeshShadingParams shading_;
-  bool srgb_encode_ = true;
   bool placeholders_uploaded_ = false;
 };
 

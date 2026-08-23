@@ -13,5 +13,9 @@ layout(std140, binding = 0) uniform LinesUbo {
 };
 
 void main() {
-  frag_color = line_color;
+  // The ALPHA is not opacity here — nothing blends this pass. It is the composite's
+  // per-pixel grade marker: the grid passes 1 (data, graded) and the TF connection
+  // lines pass 0 (annotation, ungraded) so their magenta survives the tonemap.
+  // Enabling blending on this pass would silently turn that marker into coverage.
+  frag_color = vec4(pow(max(line_color.rgb, vec3(0.0)), vec3(2.2)), line_color.a);
 }

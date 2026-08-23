@@ -7,6 +7,7 @@
 #include <QMouseEvent>
 #include <QWheelEvent>
 #include <algorithm>
+#include <cmath>
 #include <utility>
 
 namespace pj::scene3d::rhi {
@@ -14,11 +15,20 @@ namespace {
 
 Q_LOGGING_CATEGORY(lcRhiView, "pj.scene3d.rhi.view")
 
-// Background of the empty scene. Matches the GL renderer's light theme default so
-// a screenshot can be compared against the existing reference render.
+// Background of the empty scene, as a DISPLAY-referred sRGB colour matching the GL
+// renderer's light theme default.
 constexpr float kClearR = 0.96F;
 constexpr float kClearG = 0.96F;
 constexpr float kClearB = 0.96F;
+
+/// Approximate sRGB -> linear for the clear colour. The HDR target holds linear
+/// light, so the background has to be linearized on the way IN and then bypass the
+/// composite's grade on the way out; the two cancel and the theme colour survives
+/// exactly. Clearing with the display value instead would brighten the background
+/// by the encode.
+float linearizeChannel(float c) {
+  return std::pow(c, 2.2F);
+}
 
 /// Convert a QMatrix4x4 (Qt, column-major storage, row-major constructor) into a
 /// glm::mat4 so the correction can be composed with glm's camera matrices.
@@ -156,6 +166,10 @@ void RhiSceneViewWidget::render(QRhiCommandBuffer* cb) {
     scene_rpd_ = hdr_target_.renderPassDescriptor();
   }
   present_pass_.setSourceTexture(hdr_ready ? hdr_target_.resolvedColor() : nullptr);
+  // The composite's far-plane background bypass needs the resolved depth. It only
+  // exists with MSAA plus QRhi::ResolveDepthStencil, so this may legitimately be
+  // null; the pass then reports that the clear alpha must stand in for it.
+  present_pass_.setDepthTexture(hdr_ready ? hdr_target_.resolvedDepth() : nullptr);
 
   // Every upload must be batched BEFORE a pass opens; QRhi forbids recording them
   // inside one. Both the scene passes and the present pass contribute here.
@@ -165,13 +179,26 @@ void RhiSceneViewWidget::render(QRhiCommandBuffer* cb) {
   }
   present_pass_.prepare(*updates, ctx);
 
-  const QColor clear = QColor::fromRgbF(kClearR, kClearG, kClearB);
   used_hdr_chain_ = hdr_ready && hdr_target_.renderTarget() != nullptr;
+
+  // Two clears, because the two targets mean different things. The off-screen HDR
+  // target is linear light, and its ALPHA is the composite's grade marker: 1 says
+  // "grade this", which is right for the background only because the depth-based
+  // bypass rescues it. With no resolved depth there is no such rescue, so the clear
+  // drops to alpha 0 and the marker path bypasses the background instead. The
+  // widget target is only ever fully covered by the fullscreen composite triangle,
+  // so its clear colour is immaterial.
+  const float clear_alpha = present_pass_.backgroundNeedsAlphaClear() ? 0.0F : 1.0F;
+  const QColor scene_clear = used_hdr_chain_ ? QColor::fromRgbF(
+                                                   linearizeChannel(kClearR), linearizeChannel(kClearG),
+                                                   linearizeChannel(kClearB), clear_alpha)
+                                             : QColor::fromRgbF(kClearR, kClearG, kClearB);
+  const QColor clear = QColor::fromRgbF(kClearR, kClearG, kClearB);
 
   if (used_hdr_chain_) {
     // Scene into the off-screen multisample chain. Resolve to single-sample
     // happens implicitly at endPass, driven by the attachment's resolveTexture.
-    cb->beginPass(hdr_target_.renderTarget(), clear, {1.0F, 0}, updates);
+    cb->beginPass(hdr_target_.renderTarget(), scene_clear, {1.0F, 0}, updates);
     cb->setViewport(
         {0.0F, 0.0F, static_cast<float>(ctx.pixel_size.width()), static_cast<float>(ctx.pixel_size.height())});
     for (IRhiRenderPass* pass : passes()) {
@@ -189,7 +216,7 @@ void RhiSceneViewWidget::render(QRhiCommandBuffer* cb) {
   } else {
     // Fallback: straight into the widget target. Loses MSAA and the HDR buffer but
     // still shows the scene, which beats a blank dock.
-    cb->beginPass(widget_rt, clear, {1.0F, 0}, updates);
+    cb->beginPass(widget_rt, scene_clear, {1.0F, 0}, updates);
     cb->setViewport(
         {0.0F, 0.0F, static_cast<float>(ctx.pixel_size.width()), static_cast<float>(ctx.pixel_size.height())});
     for (IRhiRenderPass* pass : passes()) {

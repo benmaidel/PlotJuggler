@@ -118,10 +118,6 @@ void RhiMeshPass::setShadingParams(const MeshShadingParams& params) {
   shading_ = params;
 }
 
-void RhiMeshPass::setSrgbEncode(bool enable) {
-  srgb_encode_ = enable;
-}
-
 void RhiMeshPass::destroyMeshGpu(MeshResource& resource) {
   delete resource.vbo;
   resource.vbo = nullptr;
@@ -567,7 +563,6 @@ void RhiMeshPass::prepare(QRhiResourceUpdateBatch& updates, const RhiFrameContex
   scene.light_scales[1] = shading_.direct_scale;
   scene.light_scales[2] = shading_.fill_light_scale;
   scene.light_scales[3] = shading_.env_intensity;
-  scene.render_flags[0] = srgb_encode_ ? 1.0F : 0.0F;
   updates.updateDynamicBuffer(scene_ubo_, 0, sizeof(SceneUbo), &scene);
 }
 

@@ -356,6 +356,17 @@ int main(int argc, char** argv) {
                               glm::vec3(0.0F, 0.0F, 1.0F))});
   }
 
+  // Composite look knobs. Overridable so the four tonemap operators can be
+  // rendered and compared from one build:
+  //   PJ_TONEMAP=0|1|2|3  (None / ACES / AgX / Khronos PBR Neutral)
+  {
+    auto params = view.presentPass().compositeParams();
+    if (!qEnvironmentVariableIsEmpty("PJ_TONEMAP")) {
+      params.tonemap_mode = qEnvironmentVariableIntValue("PJ_TONEMAP");
+    }
+    view.presentPass().setCompositeParams(params);
+  }
+
   if (view.camera() != nullptr) {
     view.camera()->adoptState(referencePose());
   }

@@ -35,11 +35,6 @@ void main() {
     color = vec3(g, g, g);
   }
 
-  // NOTE: deliberately NOT linearized with pow(color, 2.2) as the GL renderer's
-  // equivalent does. That linearization exists because the GL composite re-encodes
-  // to sRGB; the QRhi present pass is still a passthrough, so linearizing here
-  // would just render everything too dark. When the composite operators land
-  // (tonemap + sRGB encode), EVERY QRhi pass must start writing linear light,
-  // including this one. See docs/ARCHITECTURE.md, "QRhi / Metal port".
-  frag_color = vec4(color, opacity);
+  frag_color = vec4(pow(max(color, vec3(0.0)), vec3(2.2)), opacity);
+
 }

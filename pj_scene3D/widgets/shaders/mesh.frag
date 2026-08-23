@@ -16,7 +16,7 @@ layout(std140, binding = 0) uniform SceneUbo {
   vec4 camera_pos;
   vec4 key_light_dir;
   vec4 light_scales;  // ambient, direct(key), fill, env_intensity
-  vec4 render_flags;  // srgb_encode, unused x3
+  vec4 render_flags;  // reserved (SSAO/EDL strengths)
 };
 
 layout(std140, binding = 1) uniform DrawUbo {
@@ -173,13 +173,8 @@ void main() {
   }
   color += emissive_factor.rgb * texture(u_emissive_tex, v_uv).rgb;
 
-  // The shading above is genuine linear-light PBR, but the QRhi present pass is
-  // still a passthrough (its tonemap + sRGB encode are a separate port step). So
-  // encode here while that is true, driven by a host flag rather than by editing
-  // this shader later: when the composite operators land, the host clears
-  // render_flags.x and this becomes a no-op with no shader change.
-  if (render_flags.x != 0.0) {
-    color = pow(max(color, vec3(0.0)), vec3(1.0 / 2.2));
-  }
+  // Output stays LINEAR: the composite present pass owns the single sRGB encode.
+  // The alpha doubles as that pass's grade marker; an opaque mesh writes 1, so data
+  // meshes take the filmic look.
   frag_color = vec4(color, out_alpha);
 }
