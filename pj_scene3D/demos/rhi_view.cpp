@@ -99,6 +99,40 @@ int main(int argc, char** argv) {
   view.pointcloudPass().setColormap(PJ::Colormap::kTurbo);
   view.pointcloudPass().setPointRadius(0.045F);
 
+  // Dense voxel field: a hollow-ish shell whose value ramps with height, drawn
+  // with the kAtOrAbove predicate so the shader's degenerate-clip path runs for
+  // most of the lattice.
+  {
+    const int vc = 24;
+    const int vr = 24;
+    const int vs = 16;
+    std::vector<float> field(static_cast<size_t>(vc) * vr * vs, 0.0F);
+    for (int z = 0; z < vs; ++z) {
+      for (int y = 0; y < vr; ++y) {
+        for (int x = 0; x < vc; ++x) {
+          const float dx = static_cast<float>(x) - (vc * 0.5F);
+          const float dy = static_cast<float>(y) - (vr * 0.5F);
+          const float radius = std::sqrt((dx * dx) + (dy * dy));
+          // A cone: wider at the bottom, so the shell reads clearly in 3D.
+          const float wanted = 10.0F - (static_cast<float>(z) * 0.5F);
+          const bool shell = std::abs(radius - wanted) < 1.2F;
+          field[(static_cast<size_t>(z) * vr * vc) + (static_cast<size_t>(y) * vc) + x] =
+              shell ? (0.2F + (static_cast<float>(z) / static_cast<float>(vs))) : 0.0F;
+        }
+      }
+    }
+    auto& vox = view.voxelGridPass();
+    vox.setField(field.data(), vc, vr, vs);
+    vox.setCellSize(glm::vec3(0.22F));
+    glm::mat4 vmodel(1.0F);
+    vmodel = glm::translate(vmodel, glm::vec3(-2.6F, -2.6F, 0.05F));
+    vox.setModelMatrix(vmodel);
+    vox.setDrawMode(pj::scene3d::rhi::RhiVoxelGridPass::DrawMode::kAtOrAbove);
+    vox.setThreshold(0.01F);
+    vox.setColorRange(0.2F, 1.2F);
+    vox.setColormap(PJ::Colormap::kViridis);
+  }
+
   // Synthetic occupancy map: free interior, an occupied wall ring, a lethal blob,
   // and an unknown (255) outer border so the transparent-unknown path is exercised.
   {

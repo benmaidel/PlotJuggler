@@ -16,6 +16,7 @@
 #include "pj_scene3d_widgets/rhi/rhi_present_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_render_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_tf_connections_pass.h"
+#include "pj_scene3d_widgets/rhi/rhi_voxel_grid_pass.h"
 
 namespace pj::scene3d::rhi {
 
@@ -46,6 +47,8 @@ class RhiSceneViewWidget : public QRhiWidget {
   RhiTfConnectionsPass& tfConnectionsPass() { return tf_connections_pass_; }
   /// The occupancy-grid / costmap pass.
   RhiOccupancyGridPass& occupancyGridPass() { return occupancy_pass_; }
+  /// The dense voxel-grid pass.
+  RhiVoxelGridPass& voxelGridPass() { return voxel_pass_; }
 
   /// Replace the camera model. The new model adopts the outgoing model's pose, so
   /// switching does not move the viewpoint.
@@ -99,6 +102,7 @@ class RhiSceneViewWidget : public QRhiWidget {
   RhiPointcloudPass pointcloud_pass_;
   RhiTfConnectionsPass tf_connections_pass_;
   RhiOccupancyGridPass occupancy_pass_;
+  RhiVoxelGridPass voxel_pass_;
 
   /// Off-screen multisample HDR chain the scene renders into, plus the fullscreen
   /// pass that composites it onto the widget target. When the chain cannot be
