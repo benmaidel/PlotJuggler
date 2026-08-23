@@ -26,6 +26,7 @@ set(PJ_SCENE3D_WIDGETS_SOURCES
   src/rhi/rhi_present_pass.cpp
   src/rhi/rhi_tf_connections_pass.cpp
   src/rhi/rhi_voxel_grid_pass.cpp
+  src/rhi/rhi_ssao_pass.cpp
   src/rhi/rhi_scene_view_widget.cpp
   src/gl/buffer.cpp
   src/gl/program.cpp
@@ -87,6 +88,7 @@ set(PJ_SCENE3D_WIDGETS_SOURCES
   include/pj_scene3d_widgets/rhi/rhi_present_pass.h
   include/pj_scene3d_widgets/rhi/rhi_tf_connections_pass.h
   include/pj_scene3d_widgets/rhi/rhi_voxel_grid_pass.h
+  include/pj_scene3d_widgets/rhi/rhi_ssao_pass.h
   include/pj_scene3d_widgets/rhi/rhi_scene_view_widget.h
   include/pj_scene3d_widgets/hud_overlay.h
   include/pj_scene3d_widgets/scene_view_widget.h
@@ -173,6 +175,8 @@ qt6_add_shaders(pj_scene3d_widgets "scene3d_shaders"
     shaders/pointcloud.vert
     shaders/pointcloud.frag
     shaders/present.vert
+    shaders/ssao.frag
+    shaders/ssao_blur.frag
     shaders/present.frag
 )
 

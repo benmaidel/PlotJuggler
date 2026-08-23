@@ -23,6 +23,20 @@ struct RhiFrameContext {
   /// and view-dependent shading (the mesh pass's Fresnel, specular and environment
   /// reflection) needs it per fragment.
   glm::vec3 camera_pos_world{0.0F};
+
+  /// VIEW space <-> SCREEN space, for the screen-space passes.
+  ///
+  /// "Screen space" here is (u, v, d): the off-screen textures' own coordinates and
+  /// the depth-buffer value, all in [0,1]. Defining it that way is deliberate — it
+  /// puts every backend difference into these two CPU-built matrices, so a
+  /// screen-space shader can reconstruct a view position from a depth sample
+  /// without knowing anything about NDC conventions. Three separate differences are
+  /// folded in: the clip-space correction, whether NDC z spans [-1,1] (OpenGL) or
+  /// [0,1] (everything else), and whether texture row 0 is the bottom or the top of
+  /// the framebuffer. Getting any of them wrong yields plausible-looking but wrong
+  /// occlusion, so it is done once here rather than per pass.
+  glm::mat4 screen_from_view{1.0F};
+  glm::mat4 view_from_screen{1.0F};
 };
 
 /// One drawable stage of the QRhi scene renderer.

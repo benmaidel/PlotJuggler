@@ -75,6 +75,14 @@ void RhiSceneViewWidget::setCamera(std::unique_ptr<ICamera> camera) {
   update();
 }
 
+void RhiSceneViewWidget::setSsaoEnabled(bool enabled) {
+  if (ssao_enabled_ == enabled) {
+    return;
+  }
+  ssao_enabled_ = enabled;
+  update();
+}
+
 void RhiSceneViewWidget::setSceneSamples(int samples) {
   if (samples == desired_samples_) {
     return;
@@ -95,6 +103,38 @@ std::vector<IRhiRenderPass*> RhiSceneViewWidget::passes() {
   // buffer to be occluded correctly.
   return {&grid_pass_,       &occupancy_pass_, &tf_connections_pass_, &mesh_pass_, &voxel_pass_,
           &pointcloud_pass_, &marker_pass_,    &axis_pass_,           &poses_pass_};
+}
+
+glm::mat4 RhiSceneViewWidget::buildScreenFromView(const QSize& pixel_size) const {
+  if (camera_ == nullptr || pixel_size.height() <= 0) {
+    return glm::mat4{1.0F};
+  }
+  const QRhi* r = rhi();
+  if (r == nullptr) {
+    return glm::mat4{1.0F};
+  }
+  const float aspect = static_cast<float>(pixel_size.width()) / static_cast<float>(pixel_size.height());
+  const glm::mat4 correction = toGlm(r->clipSpaceCorrMatrix());
+  const glm::mat4 clip_from_view = correction * camera_->projMatrix(aspect);
+
+  // NDC -> screen. The two axes that vary by backend:
+  //
+  //  - z: the correction matrix is precisely what remaps OpenGL's [-1,1] NDC depth
+  //    to the [0,1] the other backends use, so an IDENTITY correction means the GL
+  //    convention is still in force and z needs the extra *0.5+0.5 here.
+  //  - v: OpenGL's framebuffer row 0 is the bottom, everyone else's is the top,
+  //    which is the same fact the present pass consumes as isYUpInFramebuffer().
+  const bool ndc_z_is_minus_one_to_one = correction[2][2] == 1.0F && correction[3][2] == 0.0F;
+  const float sz = ndc_z_is_minus_one_to_one ? 0.5F : 1.0F;
+  const float bz = ndc_z_is_minus_one_to_one ? 0.5F : 0.0F;
+  const float sy = r->isYUpInFramebuffer() ? 0.5F : -0.5F;
+
+  glm::mat4 ndc_to_screen(1.0F);
+  ndc_to_screen[0] = glm::vec4(0.5F, 0.0F, 0.0F, 0.0F);
+  ndc_to_screen[1] = glm::vec4(0.0F, sy, 0.0F, 0.0F);
+  ndc_to_screen[2] = glm::vec4(0.0F, 0.0F, sz, 0.0F);
+  ndc_to_screen[3] = glm::vec4(0.5F, 0.5F, bz, 1.0F);
+  return ndc_to_screen * clip_from_view;
 }
 
 glm::mat4 RhiSceneViewWidget::buildViewProj(const QSize& pixel_size) const {
@@ -120,6 +160,7 @@ void RhiSceneViewWidget::initialize(QRhiCommandBuffer* /*cb*/) {
       pass->release();
     }
     present_pass_.release();
+    ssao_pass_.release();
     hdr_target_.release();
     scene_rpd_ = nullptr;
     rhi_cached_ = r;
@@ -152,6 +193,8 @@ void RhiSceneViewWidget::render(QRhiCommandBuffer* cb) {
   if (camera_ != nullptr) {
     ctx.camera_pos_world = camera_->position();
   }
+  ctx.screen_from_view = buildScreenFromView(ctx.pixel_size);
+  ctx.view_from_screen = glm::inverse(ctx.screen_from_view);
 
   const bool hdr_ready = hdr_target_.ensure(*r, ctx.pixel_size, desired_samples_);
   // The geometry pipelines are only valid for the descriptor they were built
@@ -206,6 +249,20 @@ void RhiSceneViewWidget::render(QRhiCommandBuffer* cb) {
     }
     cb->endPass();
 
+    // Screen-space occlusion, between the scene and the composite because it reads
+    // the RESOLVED depth (which only exists once the scene pass has ended) and
+    // writes its own off-screen targets. It needs that resolved depth, so it stays
+    // off when the chain could not produce one.
+    QRhiTexture* ao = nullptr;
+    if (ssao_enabled_ && hdr_target_.resolvedDepth() != nullptr) {
+      ssao_pass_.setDepthTexture(hdr_target_.resolvedDepth());
+      if (ssao_pass_.ensure(*r, ctx.pixel_size)) {
+        ssao_pass_.render(*cb, ctx);
+        ao = ssao_pass_.output();
+      }
+    }
+    present_pass_.setAoTexture(ao);
+
     // Composite onto the widget's own target. The clear colour is irrelevant here
     // because the fullscreen triangle covers every pixel.
     cb->beginPass(widget_rt, clear, {1.0F, 0});
@@ -232,6 +289,7 @@ void RhiSceneViewWidget::releaseResources() {
     pass->release();
   }
   present_pass_.release();
+  ssao_pass_.release();
   hdr_target_.release();
   scene_rpd_ = nullptr;
   rhi_cached_ = nullptr;

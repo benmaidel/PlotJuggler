@@ -33,9 +33,11 @@ layout(std140, binding = 0) uniform PresentUbo {
   // 1.0 when u_depth holds a real resolved depth buffer. Without one the
   // far-plane background bypass cannot run; see the note in main().
   float has_depth;
+  // 1.0 when u_ao holds a real AO field; 0 leaves the scene unoccluded.
+  float has_ao;
+  // How much of the AO field to apply, as a lerp from "no occlusion" toward it.
+  float ao_strength;
   float pad0;
-  float pad1;
-  float pad2;
 };
 
 // The resolved (single-sample) HDR scene colour. Its ALPHA is not opacity: it is a
@@ -43,6 +45,8 @@ layout(std140, binding = 0) uniform PresentUbo {
 layout(binding = 1) uniform sampler2D u_scene;
 // Resolved single-sample depth, used only for the background bypass.
 layout(binding = 2) uniform sampler2D u_depth;
+// Blurred screen-space ambient occlusion (R16F, 1 = unoccluded).
+layout(binding = 3) uniform sampler2D u_ao;
 
 vec3 sRGB(vec3 c) {
   const bvec3 k = lessThanEqual(c, vec3(0.0031308));
@@ -107,11 +111,14 @@ vec3 tonemapNeutral(vec3 c) {
 void main() {
   const vec2 uv = vec2(v_uv.x, mix(v_uv.y, 1.0 - v_uv.y, flip_v));
   const vec4 scene = texture(u_scene, uv);
-  const vec3 hdr = scene.rgb * exposure;
+  vec3 hdr = scene.rgb * exposure;
 
-  // SSAO and EDL multiply in here in the GL renderer. Those passes are not ported
-  // yet, so there is deliberately nothing to multiply — the slot is noted rather
-  // than stubbed, so adding them is a local change.
+  // Occlusion multiplies into LINEAR light, before the tonemap: darkening after the
+  // tonemap would compress the shadowed range twice and read as flat grey.
+  if (has_ao != 0.0) {
+    hdr *= mix(1.0, texture(u_ao, uv).r, ao_strength);
+  }
+  // EDL's multiply belongs here too, once that pass exists.
 
   vec3 graded = tonemap_mode == 1   ? tonemapACES(hdr)
                 : tonemap_mode == 2 ? tonemapAgX(hdr)

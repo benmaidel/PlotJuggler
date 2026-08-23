@@ -3,6 +3,7 @@
 // SPDX-License-Identifier: MPL-2.0
 
 #include "pj_scene3d_widgets/rhi/rhi_render_pass.h"
+#include "pj_scene3d_widgets/scene_look_defaults.h"
 
 namespace pj::scene3d::rhi {
 
@@ -44,15 +45,22 @@ class RhiPresentPass final : public IRhiRenderPass {
   /// clearing the target's alpha to 0 instead — see backgroundNeedsAlphaClear().
   void setDepthTexture(QRhiTexture* texture);
 
-  /// Composite operator settings, mirroring SceneViewWidget::CompositeParams.
+  /// The blurred ambient-occlusion field to multiply in, or nullptr for none.
+  void setAoTexture(QRhiTexture* texture);
+
+  /// Composite operator settings, mirroring SceneViewWidget::CompositeParams. The
+  /// defaults come from scene_look_defaults.h rather than being restated, so the
+  /// QRhi renderer's baked look cannot drift from the OpenGL one.
   struct CompositeParams {
     /// 0 None, 1 ACES, 2 AgX, 3 Khronos PBR Neutral.
-    int tonemap_mode = 1;
-    float exposure = 1.1F;
+    int tonemap_mode = look::kTonemapMode;
+    float exposure = look::kExposure;
     /// Applied AFTER the tonemap: ACES desaturates, so this restores the punch
     /// rather than pre-boosting colour into the tonemap's shoulder. Reordering
     /// these two changes the look.
-    float saturation = 1.2F;
+    float saturation = look::kSaturation;
+    /// How strongly the AO field darkens; 0 disables it even when one is bound.
+    float ao_strength = look::kAoStrength;
   };
   void setCompositeParams(const CompositeParams& params);
   [[nodiscard]] const CompositeParams& compositeParams() const {
@@ -76,9 +84,9 @@ class RhiPresentPass final : public IRhiRenderPass {
     int tonemap_mode;
     float saturation;
     float has_depth;
+    float has_ao;
+    float ao_strength;
     float pad0;
-    float pad1;
-    float pad2;
   };
   static_assert(sizeof(PresentUbo) == 32, "PresentUbo must match the std140 block layout");
 
@@ -92,10 +100,12 @@ class RhiPresentPass final : public IRhiRenderPass {
   /// 1x1 stand-ins bound at pipeline-creation time so the SRB layout is final.
   QRhiTexture* placeholder_tex_ = nullptr;
   QRhiTexture* depth_placeholder_tex_ = nullptr;
+  QRhiTexture* ao_placeholder_tex_ = nullptr;
   QRhiShaderResourceBindings* srb_ = nullptr;
   QRhiGraphicsPipeline* pipeline_ = nullptr;
   QRhiTexture* source_ = nullptr;
   QRhiTexture* depth_ = nullptr;
+  QRhiTexture* ao_ = nullptr;
   bool bindings_dirty_ = true;
   CompositeParams params_;
   /// Cached from QRhi::isYUpInFramebuffer() at initialize(); see present.frag.

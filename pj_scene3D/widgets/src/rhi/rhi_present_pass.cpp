@@ -42,6 +42,14 @@ void RhiPresentPass::setDepthTexture(QRhiTexture* texture) {
   bindings_dirty_ = true;
 }
 
+void RhiPresentPass::setAoTexture(QRhiTexture* texture) {
+  if (ao_ == texture) {
+    return;
+  }
+  ao_ = texture;
+  bindings_dirty_ = true;
+}
+
 void RhiPresentPass::setCompositeParams(const CompositeParams& params) {
   params_ = params;
 }
@@ -105,6 +113,11 @@ bool RhiPresentPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd, int sa
     release();
     return false;
   }
+  ao_placeholder_tex_ = rhi.newTexture(QRhiTexture::R16F, QSize(1, 1));
+  if (ao_placeholder_tex_ == nullptr || !ao_placeholder_tex_->create()) {
+    release();
+    return false;
+  }
 
   srb_ = rhi.newShaderResourceBindings();
   srb_->setBindings({
@@ -114,6 +127,8 @@ bool RhiPresentPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd, int sa
           1, QRhiShaderResourceBinding::FragmentStage, placeholder_tex_, sampler_),
       QRhiShaderResourceBinding::sampledTexture(
           2, QRhiShaderResourceBinding::FragmentStage, depth_placeholder_tex_, depth_sampler_),
+      QRhiShaderResourceBinding::sampledTexture(
+          3, QRhiShaderResourceBinding::FragmentStage, ao_placeholder_tex_, sampler_),
   });
   if (!srb_->create()) {
     release();
@@ -159,6 +174,8 @@ void RhiPresentPass::prepare(QRhiResourceUpdateBatch& updates, const RhiFrameCon
         QRhiShaderResourceBinding::sampledTexture(
             2, QRhiShaderResourceBinding::FragmentStage, depth_ != nullptr ? depth_ : depth_placeholder_tex_,
             depth_sampler_),
+        QRhiShaderResourceBinding::sampledTexture(
+            3, QRhiShaderResourceBinding::FragmentStage, ao_ != nullptr ? ao_ : ao_placeholder_tex_, sampler_),
     });
     if (!srb_->create()) {
       return;
@@ -172,6 +189,8 @@ void RhiPresentPass::prepare(QRhiResourceUpdateBatch& updates, const RhiFrameCon
   ubo.tonemap_mode = params_.tonemap_mode;
   ubo.saturation = params_.saturation;
   ubo.has_depth = depth_ != nullptr ? 1.0F : 0.0F;
+  ubo.has_ao = ao_ != nullptr ? 1.0F : 0.0F;
+  ubo.ao_strength = params_.ao_strength;
   updates.updateDynamicBuffer(ubo_, 0, sizeof(PresentUbo), &ubo);
 }
 
@@ -195,6 +214,8 @@ void RhiPresentPass::release() {
   placeholder_tex_ = nullptr;
   delete depth_placeholder_tex_;
   depth_placeholder_tex_ = nullptr;
+  delete ao_placeholder_tex_;
+  ao_placeholder_tex_ = nullptr;
   delete depth_sampler_;
   depth_sampler_ = nullptr;
   delete ubo_;

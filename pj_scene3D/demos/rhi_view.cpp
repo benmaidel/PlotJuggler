@@ -17,6 +17,7 @@
 #include <QApplication>
 #include <QColor>
 #include <QDeadlineTimer>
+#include <QElapsedTimer>
 #include <QImage>
 #include <QRect>
 #include <QSet>
@@ -365,6 +366,10 @@ int main(int argc, char** argv) {
       params.tonemap_mode = qEnvironmentVariableIntValue("PJ_TONEMAP");
     }
     view.presentPass().setCompositeParams(params);
+    // PJ_SSAO=0 disables screen-space occlusion, for A/B and cost comparison.
+    if (qEnvironmentVariableIntValue("PJ_SSAO") == 0 && !qEnvironmentVariableIsEmpty("PJ_SSAO")) {
+      view.setSsaoEnabled(false);
+    }
   }
 
   if (view.camera() != nullptr) {
@@ -394,6 +399,24 @@ int main(int argc, char** argv) {
   if (frame.isNull() || frame.width() <= 1) {
     std::fprintf(stderr, "rhi_view: FAILED to produce a frame\n");
     return 1;
+  }
+
+  // PJ_BENCH=<n>: time n further repaints and report ms/frame. Coarse — it includes
+  // event-loop overhead and grabFramebuffer's readback — but it is a like-for-like
+  // A/B for the cost of a post pass, which is what it exists for.
+  if (!qEnvironmentVariableIsEmpty("PJ_BENCH")) {
+    const int frames = std::max(1, qEnvironmentVariableIntValue("PJ_BENCH"));
+    QElapsedTimer timer;
+    timer.start();
+    int done = 0;
+    QDeadlineTimer bench_deadline(60000);
+    while (done < frames && !bench_deadline.hasExpired()) {
+      view.update();
+      QCoreApplication::processEvents(QEventLoop::AllEvents, 20);
+      ++done;
+    }
+    const double ms = static_cast<double>(timer.elapsed()) / static_cast<double>(done);
+    std::fprintf(stdout, "rhi_view: bench %d frames, %.2f ms/frame\n", done, ms);
   }
   if (!frame.save(out)) {
     std::fprintf(stderr, "rhi_view: could not save %s\n", qPrintable(out));

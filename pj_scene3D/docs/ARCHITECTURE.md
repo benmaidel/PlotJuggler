@@ -21,7 +21,8 @@ Ported so far:
 |---|---|---|
 | Host | `RhiSceneViewWidget` | camera, depth, clip-space correction, pass ordering |
 | Off-screen chain | `RhiHdrTarget` | MSAA RGBA16F + multisample depth texture + resolves |
-| Composite / present | `RhiPresentPass` | exposure -> tonemap -> saturation -> sRGB encode |
+| Composite / present | `RhiPresentPass` | exposure -> AO -> tonemap -> saturation -> sRGB encode |
+| SSAO | `RhiSsaoPass` | 32-tap hemisphere kernel + 4x4 blur, off resolved depth |
 | Ground grid | `RhiGridPass` | shares `shaders/lines.*` |
 | TF connection lines | `RhiTfConnectionsPass` | shares `shaders/lines.*` |
 | TF triads | `RhiAxisPass` | instanced; shares `shaders/arrow.*` |
@@ -57,8 +58,8 @@ exactly the class of bug QRhi does not report:
 
 **Still to do**, roughly in order of value:
 
-1. The SSAO/EDL multiplies inside the composite, which need those passes first.
-2. *(Geometry passes and the composite operators are complete.)*
+1. *(Geometry passes, the composite operators and SSAO are complete. EDL is
+   deliberately not ported — see below.)*
 3. Screen-space passes: SSAO and EDL. Both need the resolved single-sample depth
    the HDR chain already produces — `QRhi::ResolveDepthStencil` is supported on
    Metal, so the design carries over unchanged.
@@ -66,6 +67,80 @@ exactly the class of bug QRhi does not report:
    fallback for backends without compute.
 5. Wiring `RhiSceneViewWidget` into `Scene3DDockWidget` behind a flag; today only
    the demo drives it.
+
+### EDL is deliberately not ported (decision, 2026-08-23)
+
+The OpenGL renderer has an eye-dome-lighting pass, on by default. The QRhi renderer
+does not, and this is a decision rather than a gap. Anyone reaching for it should
+read this first.
+
+**What it would buy.** EDL darkens a pixel by the log-depth gap to its 8 neighbours,
+drawing contours at depth discontinuities. It comes from point-cloud viewers
+(CloudCompare, Potree), where an unlit cloud has no shape cues at all and the
+contour is the only depth information available. But PJ4's implementation is
+deliberately **mesh-only** — clouds, grid, occupancy and axes neither receive nor
+cast the contour — so it is not doing that job. What it delivers here is mesh
+silhouette definition plus emphasis on the near side of surface creases, which
+substantially overlaps what `RhiSsaoPass` already provides.
+
+**What it would cost, and why QRhi is worse than GL here.** EDL needs the scene's R8
+"is-mesh" mask. GL produces that by toggling `glDrawBuffers`, and gates the whole
+thing on `edl_enabled` so nothing is paid when it is off. QRhi cannot: attachment
+count is baked into the `QRhiRenderPassDescriptor` and every pipeline is compiled
+against it. Supporting "EDL off ⇒ no mask attachment" therefore needs two render-pass
+descriptors and two pipeline variants across **all nine passes**; the alternative is
+attaching the mask permanently and paying its MSAA + resolve bandwidth every frame
+regardless. On top of that, every fragment shader would have to declare and write
+output location 1, since an attachment a shader leaves undeclared has undefined
+contents.
+
+So the port is both broader than GL's and less able to opt out of its own cost, for
+the effect most redundant with SSAO.
+
+**Consequence to be aware of:** scenes with meshes will not match the GL renderer's
+look — no silhouette contour. EDL has no app UI and is not in `REQUIREMENTS.md`, so
+nothing else depends on it.
+
+**If it is ever revisited, consider retargeting it rather than porting it.** Applying
+EDL to point clouds — what it is actually good at, and PJ4 renders a great many —
+needs no is-mesh mask at all, which makes it a small self-contained pass on the
+shape of `RhiSsaoPass`. That is a deliberate look change from 3.x, not a port, so it
+needs sign-off.
+
+### Screen-space passes
+
+`RhiSsaoPass` is deliberately **not** an `IRhiRenderPass`. That interface records
+draws into a pass the widget has already begun, whereas a screen-space pass owns
+render passes of its own and must run *between* the scene pass and the composite —
+it reads the resolved depth, which does not exist until the scene pass has ended.
+Forcing it into the geometry-pass shape would mean pretending an off-screen chain is
+a draw call.
+
+Two things make screen-space work tractable across backends:
+
+- **`RhiFrameContext::screen_from_view` / `view_from_screen`.** "Screen space" is
+  defined as (u, v, depth) in the off-screen textures' own coordinates, all [0,1].
+  Every backend difference — the clip-space correction, whether NDC z is [-1,1]
+  (OpenGL) or [0,1], and whether texture row 0 is the framebuffer's bottom or top —
+  is folded into these two host-built matrices, so a screen-space shader
+  reconstructs a view position with no NDC knowledge at all. Getting any one of the
+  three wrong produces plausible-looking but wrong occlusion, which is exactly the
+  kind of error that survives review.
+- **`uv = gl_FragCoord.xy * texel`, not the interpolated NDC-derived uv.**
+  `gl_FragCoord`'s origin follows the render target's orientation and the sampled
+  texture's row 0 follows the same convention, so this addresses the matching texel
+  under both. An NDC-derived uv is vertically mirrored on one of the two backends —
+  and because the pass would then read *and* write mirrored, it looks
+  self-consistent while being wrong relative to the scene colour.
+
+The occlusion multiply lands in LINEAR light **before** the tonemap. Darkening after
+it would compress the shadowed range twice and read as flat grey. Note that
+annotation pixels never receive AO, because the marker bypass hands them the raw
+scene colour — matching GL.
+
+Cost: at 1800x1280 the harness holds ~60 Hz with SSAO on (16.7 ms/frame),
+indistinguishable from off (16.9 ms/frame). The harness is vsync-locked, so that
+bounds the added cost inside the frame budget rather than measuring it in isolation.
 
 ### The composite chain, and why it touches every pass
 

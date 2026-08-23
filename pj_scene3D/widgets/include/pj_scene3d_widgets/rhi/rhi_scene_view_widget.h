@@ -18,6 +18,7 @@
 #include "pj_scene3d_widgets/rhi/rhi_poses_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_present_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_render_pass.h"
+#include "pj_scene3d_widgets/rhi/rhi_ssao_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_tf_connections_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_voxel_grid_pass.h"
 
@@ -81,6 +82,13 @@ class RhiSceneViewWidget : public QRhiWidget {
   RhiPresentPass& presentPass() {
     return present_pass_;
   }
+  /// Screen-space ambient occlusion, multiplied into the scene by the composite.
+  RhiSsaoPass& ssaoPass() {
+    return ssao_pass_;
+  }
+  /// Whether SSAO contributes this frame. It needs the resolved depth, so it is
+  /// off whenever the HDR chain could not produce one.
+  void setSsaoEnabled(bool enabled);
 
   /// Replace the camera model. The new model adopts the outgoing model's pose, so
   /// switching does not move the viewpoint.
@@ -130,11 +138,15 @@ class RhiSceneViewWidget : public QRhiWidget {
   /// convention. Applying it once here keeps every pass and shader
   /// backend-agnostic.
   [[nodiscard]] glm::mat4 buildViewProj(const QSize& pixel_size) const;
+  /// View -> screen (uv + depth-buffer value, all [0,1]) for the screen-space
+  /// passes. See RhiFrameContext::screen_from_view for what it folds in.
+  [[nodiscard]] glm::mat4 buildScreenFromView(const QSize& pixel_size) const;
 
   /// Cached QRhi identity: a change means every pass's GPU objects died with the
   /// old device and must be rebuilt (widget reparent, screen change).
   QRhi* rhi_cached_ = nullptr;
   bool has_rendered_ = false;
+  bool ssao_enabled_ = true;
 
   std::unique_ptr<ICamera> camera_;
   RhiGridPass grid_pass_;
@@ -153,6 +165,7 @@ class RhiSceneViewWidget : public QRhiWidget {
   /// costs MSAA and HDR but still shows the scene.
   RhiHdrTarget hdr_target_;
   RhiPresentPass present_pass_;
+  RhiSsaoPass ssao_pass_;
   int desired_samples_ = 4;
   bool used_hdr_chain_ = false;
   /// Render pass descriptor the geometry passes were last initialized against.
