@@ -80,12 +80,13 @@ void RhiAxisPass::rebuildInstances() {
   }
 }
 
-bool RhiAxisPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd) {
-  if (pipeline_ != nullptr && rhi_ == &rhi) {
+bool RhiAxisPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd, int sample_count) {
+  if (pipeline_ != nullptr && rhi_ == &rhi && sample_count_ == sample_count) {
     return true;
   }
   release();
   rhi_ = &rhi;
+  sample_count_ = sample_count;
 
   const QShader vert = loadBakedShader(QStringLiteral(":/scene3d_shaders/axis.vert.qsb"));
   const QShader frag = loadBakedShader(QStringLiteral(":/scene3d_shaders/axis.frag.qsb"));
@@ -135,6 +136,8 @@ bool RhiAxisPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd) {
   pipeline_->setDepthWrite(true);
   pipeline_->setCullMode(QRhiGraphicsPipeline::Back);
   pipeline_->setShaderResourceBindings(srb_);
+  // Must equal the render target's sample count (see IRhiRenderPass::initialize).
+  pipeline_->setSampleCount(sample_count_);
   pipeline_->setRenderPassDescriptor(&rpd);
   if (!pipeline_->create()) {
     qCWarning(lcRhiAxis) << "axis pipeline creation failed";

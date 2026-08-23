@@ -6,6 +6,7 @@
 #include <QLoggingCategory>
 #include <QMouseEvent>
 #include <QWheelEvent>
+#include <algorithm>
 #include <utility>
 
 namespace pj::scene3d::rhi {
@@ -77,7 +78,7 @@ void RhiSceneViewWidget::setSceneSamples(int samples) {
 std::vector<IRhiRenderPass*> RhiSceneViewWidget::passes() {
   // Grid first: it does not write depth, so drawing it before the opaque triads
   // lets them occlude it correctly rather than the reverse.
-  return {&grid_pass_, &axis_pass_};
+  return {&grid_pass_, &pointcloud_pass_, &axis_pass_};
 }
 
 glm::mat4 RhiSceneViewWidget::buildViewProj(const QSize& pixel_size) const {
@@ -115,7 +116,9 @@ void RhiSceneViewWidget::initialize(QRhiCommandBuffer* /*cb*/) {
   // Only the present pass can be built here: it targets the WIDGET's render pass.
   // The geometry passes target the off-screen HDR chain, whose descriptor does not
   // exist until render() has sized it, so they are initialized lazily there.
-  if (!present_pass_.initialize(*r, *rt->renderPassDescriptor())) {
+  // The present pass draws into the WIDGET target, whose sample count is the
+  // widget's own (1 unless setSampleCount was called) — not the HDR chain's.
+  if (!present_pass_.initialize(*r, *rt->renderPassDescriptor(), std::max(1, sampleCount()))) {
     qCWarning(lcRhiView) << "present pass unavailable; falling back to direct-to-widget rendering";
   }
 }
@@ -137,7 +140,7 @@ void RhiSceneViewWidget::render(QRhiCommandBuffer* cb) {
   if (hdr_ready && hdr_target_.renderPassDescriptor() != scene_rpd_) {
     for (IRhiRenderPass* pass : passes()) {
       pass->release();
-      if (!pass->initialize(*r, *hdr_target_.renderPassDescriptor())) {
+      if (!pass->initialize(*r, *hdr_target_.renderPassDescriptor(), hdr_target_.sampleCount())) {
         qCWarning(lcRhiView) << "a render pass failed to initialize and will be skipped";
       }
     }

@@ -21,7 +21,7 @@ class RhiAxisPass final : public IRhiRenderPass {
   RhiAxisPass() = default;
   ~RhiAxisPass() override;
 
-  [[nodiscard]] bool initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd) override;
+  [[nodiscard]] bool initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd, int sample_count) override;
   void prepare(QRhiResourceUpdateBatch& updates, const RhiFrameContext& ctx) override;
   void draw(QRhiCommandBuffer& cb, const RhiFrameContext& ctx) override;
   void release() override;
@@ -50,6 +50,8 @@ class RhiAxisPass final : public IRhiRenderPass {
   void rebuildInstances();
 
   QRhi* rhi_ = nullptr;
+  /// Sample count the current pipeline was built for; a change forces a rebuild.
+  int sample_count_ = 1;
   QRhiBuffer* vbo_ = nullptr;
   QRhiBuffer* ibo_ = nullptr;
   QRhiBuffer* instance_buf_ = nullptr;

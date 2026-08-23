@@ -39,13 +39,14 @@ void RhiGridPass::setGeometry(float extent_m, int divisions) {
   geometry_dirty_ = true;
 }
 
-bool RhiGridPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd) {
-  if (pipeline_ != nullptr && rhi_ == &rhi) {
+bool RhiGridPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd, int sample_count) {
+  if (pipeline_ != nullptr && rhi_ == &rhi && sample_count_ == sample_count) {
     return true;
   }
   // A different QRhi means the old device's objects are already invalid.
   release();
   rhi_ = &rhi;
+  sample_count_ = sample_count;
 
   const QShader vert = loadBakedShader(QStringLiteral(":/scene3d_shaders/grid.vert.qsb"));
   const QShader frag = loadBakedShader(QStringLiteral(":/scene3d_shaders/grid.frag.qsb"));
@@ -89,6 +90,8 @@ bool RhiGridPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd) {
   pipeline_->setDepthWrite(false);
   pipeline_->setCullMode(QRhiGraphicsPipeline::None);
   pipeline_->setShaderResourceBindings(srb_);
+  // Must equal the render target's sample count (see IRhiRenderPass::initialize).
+  pipeline_->setSampleCount(sample_count_);
   pipeline_->setRenderPassDescriptor(&rpd);
   if (!pipeline_->create()) {
     qCWarning(lcRhiGrid) << "grid pipeline creation failed";

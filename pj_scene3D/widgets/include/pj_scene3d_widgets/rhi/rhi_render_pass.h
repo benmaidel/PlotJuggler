@@ -34,14 +34,20 @@ class IRhiRenderPass {
   IRhiRenderPass(const IRhiRenderPass&) = delete;
   IRhiRenderPass& operator=(const IRhiRenderPass&) = delete;
 
-  /// Create pipelines/buffers against `rhi`, compatible with `rpd`.
+  /// Create pipelines/buffers against `rhi`, compatible with `rpd` and with
+  /// `sample_count` (the MSAA level of the target this pass draws into).
+  ///
+  /// `sample_count` is NOT optional: QRhi requires a graphics pipeline's sample
+  /// count to match its render target's, and a mismatch is not reported as an
+  /// error — it silently writes a fraction of the samples, which reads as a
+  /// uniformly washed-out, semi-transparent draw.
   ///
   /// Must be idempotent and safe to call again after a QRhi swap (widget
   /// reparent, screen change): the previous device's objects are already gone via
   /// release(), so an implementation re-creates from scratch. Returns false if the
   /// pass is unusable (e.g. its shader pack has no variant for this backend), in
   /// which case the widget skips it instead of failing the whole frame.
-  [[nodiscard]] virtual bool initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd) = 0;
+  [[nodiscard]] virtual bool initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd, int sample_count) = 0;
 
   /// Queue this frame's uploads (uniform blocks, vertex data). Called before
   /// beginPass, never inside it.

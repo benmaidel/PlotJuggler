@@ -20,7 +20,9 @@
 #include <QImage>
 #include <QSet>
 #include <QString>
+#include <cmath>
 #include <cstdio>
+#include <vector>
 
 #include <glm/gtc/matrix_transform.hpp>
 
@@ -67,6 +69,29 @@ int main(int argc, char** argv) {
       glm::translate(glm::mat4(1.0F), glm::vec3(1.2F, 0.6F, 1.8F)),
   });
   view.axisPass().setAxisLength(0.8F);
+
+  // A spiral cloud in the SAME record layout the MCAP fixture publishes
+  // (contiguous float32 xyz then a float32 scalar, 16-byte stride), so this
+  // exercises the layout that allows a wire buffer to be uploaded verbatim.
+  struct WirePoint {
+    float x;
+    float y;
+    float z;
+    float intensity;
+  };
+  std::vector<WirePoint> cloud;
+  cloud.reserve(2000);
+  for (int i = 0; i < 2000; ++i) {
+    const float t = static_cast<float>(i) / 2000.0F;
+    const float angle = t * 12.0F * 3.14159265F;
+    const float radius = 1.2F + (t * 2.5F);
+    cloud.push_back({radius * std::cos(angle), radius * std::sin(angle), 0.4F + (t * 3.0F), t});
+  }
+  view.pointcloudPass().setPoints(cloud.data(), static_cast<int>(cloud.size()),
+                                  pj::scene3d::rhi::RhiPointcloudPass::Layout{});
+  view.pointcloudPass().setScalarRange(0.0F, 1.0F);
+  view.pointcloudPass().setColormap(PJ::Colormap::kTurbo);
+  view.pointcloudPass().setPointRadius(0.045F);
   if (view.camera() != nullptr) {
     view.camera()->adoptState(referencePose());
   }

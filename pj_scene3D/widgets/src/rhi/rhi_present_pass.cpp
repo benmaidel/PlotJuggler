@@ -34,12 +34,13 @@ void RhiPresentPass::setSourceTexture(QRhiTexture* texture) {
   bindings_dirty_ = true;
 }
 
-bool RhiPresentPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd) {
-  if (pipeline_ != nullptr && rhi_ == &rhi) {
+bool RhiPresentPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd, int sample_count) {
+  if (pipeline_ != nullptr && rhi_ == &rhi && sample_count_ == sample_count) {
     return true;
   }
   release();
   rhi_ = &rhi;
+  sample_count_ = sample_count;
 
   const QShader vert = loadBakedShader(QStringLiteral(":/scene3d_shaders/present.vert.qsb"));
   const QShader frag = loadBakedShader(QStringLiteral(":/scene3d_shaders/present.frag.qsb"));
@@ -64,9 +65,25 @@ bool RhiPresentPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd) {
     return false;
   }
 
+  // A 1x1 placeholder so the SRB's LAYOUT is final before the pipeline is
+  // created. This is not cosmetic: a pipeline is compiled against the resource
+  // layout of the SRB it is created with, so an SRB that gains bindings later is
+  // not layout-compatible and the draw reads garbage — which is exactly how the
+  // point-cloud pass first failed. Swapping one texture for another at the same
+  // binding later IS compatible, which is what setSourceTexture relies on.
+  placeholder_tex_ = rhi.newTexture(QRhiTexture::RGBA16F, QSize(1, 1));
+  if (placeholder_tex_ == nullptr || !placeholder_tex_->create()) {
+    release();
+    return false;
+  }
+
   srb_ = rhi.newShaderResourceBindings();
-  // Created empty and populated in prepare(): the source texture does not exist
-  // until the HDR chain has been sized, which happens after initialize().
+  srb_->setBindings({
+      QRhiShaderResourceBinding::uniformBuffer(
+          0, QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage, ubo_),
+      QRhiShaderResourceBinding::sampledTexture(1, QRhiShaderResourceBinding::FragmentStage, placeholder_tex_,
+                                                sampler_),
+  });
   if (!srb_->create()) {
     release();
     return false;
@@ -76,6 +93,8 @@ bool RhiPresentPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd) {
   pipeline_->setShaderStages({{QRhiShaderStage::Vertex, vert}, {QRhiShaderStage::Fragment, frag}});
   pipeline_->setVertexInputLayout({});  // attributeless fullscreen triangle
   pipeline_->setShaderResourceBindings(srb_);
+  // Must equal the render target's sample count (see IRhiRenderPass::initialize).
+  pipeline_->setSampleCount(sample_count_);
   pipeline_->setRenderPassDescriptor(&rpd);
   // A full-coverage copy: no depth interaction and no blending.
   pipeline_->setDepthTest(false);
@@ -93,13 +112,15 @@ bool RhiPresentPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd) {
 }
 
 void RhiPresentPass::prepare(QRhiResourceUpdateBatch& updates, const RhiFrameContext& /*ctx*/) {
-  if (pipeline_ == nullptr || source_ == nullptr) {
+  if (pipeline_ == nullptr) {
     return;
   }
-  if (bindings_dirty_) {
+  if (bindings_dirty_ && source_ != nullptr) {
     // Rebuild rather than mutate: QRhi reads an SRB at submit time, so editing one
     // between draws would make every draw see the last binding.
     srb_->destroy();
+    // Same bindings, different texture: layout-compatible, so the pipeline stays
+    // valid.
     srb_->setBindings({
         QRhiShaderResourceBinding::uniformBuffer(
             0, QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage, ubo_),
@@ -133,6 +154,8 @@ void RhiPresentPass::release() {
   srb_ = nullptr;
   delete sampler_;
   sampler_ = nullptr;
+  delete placeholder_tex_;
+  placeholder_tex_ = nullptr;
   delete ubo_;
   ubo_ = nullptr;
   source_ = nullptr;

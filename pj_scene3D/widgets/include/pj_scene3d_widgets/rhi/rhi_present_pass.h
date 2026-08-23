@@ -23,7 +23,7 @@ class RhiPresentPass final : public IRhiRenderPass {
   RhiPresentPass() = default;
   ~RhiPresentPass() override;
 
-  [[nodiscard]] bool initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd) override;
+  [[nodiscard]] bool initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd, int sample_count) override;
   void prepare(QRhiResourceUpdateBatch& updates, const RhiFrameContext& ctx) override;
   void draw(QRhiCommandBuffer& cb, const RhiFrameContext& ctx) override;
   void release() override;
@@ -46,8 +46,12 @@ class RhiPresentPass final : public IRhiRenderPass {
   static_assert(sizeof(PresentUbo) == 16, "PresentUbo must match the std140 block layout");
 
   QRhi* rhi_ = nullptr;
+  /// Sample count the current pipeline was built for; a change forces a rebuild.
+  int sample_count_ = 1;
   QRhiBuffer* ubo_ = nullptr;
   QRhiSampler* sampler_ = nullptr;
+  /// 1x1 stand-in bound at pipeline-creation time so the SRB layout is final.
+  QRhiTexture* placeholder_tex_ = nullptr;
   QRhiShaderResourceBindings* srb_ = nullptr;
   QRhiGraphicsPipeline* pipeline_ = nullptr;
   QRhiTexture* source_ = nullptr;
