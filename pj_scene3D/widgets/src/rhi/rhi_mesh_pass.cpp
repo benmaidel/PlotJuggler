@@ -345,9 +345,13 @@ void RhiMeshPass::resolveBucket(
 
       const auto slot = static_cast<std::uint32_t>(resolved_.size());
       const std::uint32_t byte_offset = slot * draw_ubo_stride_;
-      // slotUpperBound() sized the buffer for every submesh that could resolve, so
-      // overrunning here means those two walks disagree — assert rather than grow.
-      Q_ASSERT(byte_offset + sizeof(DrawUbo) <= draw_ubo_staging_.size());
+      // A real guard, not Q_ASSERT: that is compiled out of release builds, so an
+      // invariant violation wrote past the staging buffer instead of failing loudly.
+      // If slotUpperBound() and this walk ever disagree, drop the draw.
+      if (byte_offset + sizeof(DrawUbo) > draw_ubo_staging_.size()) {
+        qCWarning(lcRhiMesh) << "per-draw uniform staging overflow; dropping draw" << slot;
+        break;
+      }
       std::memcpy(draw_ubo_staging_.data() + byte_offset, &block, sizeof(DrawUbo));
 
       resolved_.push_back(ResolvedDraw{resource, &submesh, bindings->srb, byte_offset, translucent});
@@ -504,26 +508,34 @@ int RhiMeshPass::slotUpperBound() {
 }
 
 bool RhiMeshPass::ensureDrawUboCapacity(int slot_count) {
-  if (slot_count <= draw_ubo_capacity_) {
-    return true;
+  if (slot_count > draw_ubo_capacity_) {
+    // Re-creating the buffer invalidates every material binding set that referenced
+    // the old one, so they are dropped here and rebuilt during this same resolve —
+    // which is why capacity is settled BEFORE resolving rather than after.
+    delete draw_ubo_;
+    draw_ubo_capacity_ = std::max(slot_count * 2, 16);
+    draw_ubo_ = rhi_->newBuffer(
+        QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, static_cast<quint32>(draw_ubo_capacity_) * draw_ubo_stride_);
+    if (draw_ubo_ == nullptr || !draw_ubo_->create()) {
+      draw_ubo_capacity_ = 0;
+      draw_ubo_staging_.clear();
+      return false;
+    }
+    for (MaterialBindings& entry : material_srbs_) {
+      delete entry.srb;
+    }
+    material_srbs_.clear();
   }
-  // Re-creating the buffer invalidates every material binding set that referenced
-  // the old one, so they are dropped here and rebuilt during this same resolve —
-  // which is why capacity is settled BEFORE resolving rather than after.
-  delete draw_ubo_;
-  draw_ubo_capacity_ = std::max(slot_count * 2, 16);
-  draw_ubo_ = rhi_->newBuffer(
-      QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, static_cast<quint32>(draw_ubo_capacity_) * draw_ubo_stride_);
-  if (draw_ubo_ == nullptr || !draw_ubo_->create()) {
-    draw_ubo_capacity_ = 0;
-    return false;
+  // Size the staging to match the capacity UNCONDITIONALLY, not only when growing.
+  // initialize() sets the capacity to 1 for the layout-fixing binding set without
+  // allocating any staging, so a frame needing exactly one slot took the early
+  // return above and then wrote into an empty vector — a crash that only a
+  // single-submesh scene reaches, which is why no demo ever hit it.
+  const std::size_t needed = static_cast<std::size_t>(draw_ubo_capacity_) * draw_ubo_stride_;
+  if (draw_ubo_staging_.size() != needed) {
+    draw_ubo_staging_.assign(needed, std::byte{});
   }
-  for (MaterialBindings& entry : material_srbs_) {
-    delete entry.srb;
-  }
-  material_srbs_.clear();
-  draw_ubo_staging_.assign(static_cast<std::size_t>(draw_ubo_capacity_) * draw_ubo_stride_, std::byte{});
-  return true;
+  return draw_ubo_capacity_ > 0;
 }
 
 void RhiMeshPass::prepare(QRhiResourceUpdateBatch& updates, const RhiFrameContext& ctx) {
