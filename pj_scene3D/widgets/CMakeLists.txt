@@ -15,6 +15,7 @@ find_package(assimp REQUIRED)
 
 set(PJ_SCENE3D_WIDGETS_SOURCES
   # QRhi renderer (replacing the src/gl/* + src/passes/* OpenGL path).
+  src/rhi/rhi_axis_pass.cpp
   src/rhi/rhi_grid_pass.cpp
   src/rhi/rhi_hdr_target.cpp
   src/rhi/rhi_present_pass.cpp
@@ -66,6 +67,7 @@ set(PJ_SCENE3D_WIDGETS_SOURCES
   # QRhi renderer headers. Listed here (not only in src/) because AUTOMOC in
   # this target discovers Q_OBJECT classes from the header list.
   include/pj_scene3d_widgets/rhi/rhi_render_pass.h
+  include/pj_scene3d_widgets/rhi/rhi_axis_pass.h
   include/pj_scene3d_widgets/rhi/rhi_grid_pass.h
   include/pj_scene3d_widgets/rhi/rhi_hdr_target.h
   include/pj_scene3d_widgets/rhi/rhi_present_pass.h
@@ -136,6 +138,8 @@ qt6_add_shaders(pj_scene3d_widgets "scene3d_shaders"
   FILES
     shaders/rhi_probe.vert
     shaders/rhi_probe.frag
+    shaders/axis.vert
+    shaders/axis.frag
     shaders/grid.vert
     shaders/grid.frag
     shaders/present.vert

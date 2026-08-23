@@ -22,6 +22,8 @@
 #include <QString>
 #include <cstdio>
 
+#include <glm/gtc/matrix_transform.hpp>
+
 #include "pj_scene3d_widgets/rhi/rhi_scene_view_widget.h"
 
 // Q_INIT_RESOURCE must sit at global scope: inside an anonymous namespace its
@@ -56,6 +58,15 @@ int main(int argc, char** argv) {
 
   pj::scene3d::rhi::RhiSceneViewWidget view;
   view.gridPass().setGeometry(20.0F, 20);
+  // The same three-frame chain the MCAP fixture publishes on /tf
+  // (world -> base_link -> sensor), so this render is comparable with the
+  // committed GL reference image.
+  view.axisPass().setFrames({
+      glm::mat4(1.0F),
+      glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 0.0F, 1.0F)),
+      glm::translate(glm::mat4(1.0F), glm::vec3(1.2F, 0.6F, 1.8F)),
+  });
+  view.axisPass().setAxisLength(0.8F);
   if (view.camera() != nullptr) {
     view.camera()->adoptState(referencePose());
   }

@@ -75,7 +75,9 @@ void RhiSceneViewWidget::setSceneSamples(int samples) {
 }
 
 std::vector<IRhiRenderPass*> RhiSceneViewWidget::passes() {
-  return {&grid_pass_};
+  // Grid first: it does not write depth, so drawing it before the opaque triads
+  // lets them occlude it correctly rather than the reverse.
+  return {&grid_pass_, &axis_pass_};
 }
 
 glm::mat4 RhiSceneViewWidget::buildViewProj(const QSize& pixel_size) const {

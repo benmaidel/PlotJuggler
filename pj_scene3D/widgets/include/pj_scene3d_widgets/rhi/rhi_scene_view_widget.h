@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "pj_scene3d_core/camera/camera.h"
+#include "pj_scene3d_widgets/rhi/rhi_axis_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_grid_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_hdr_target.h"
 #include "pj_scene3d_widgets/rhi/rhi_present_pass.h"
@@ -34,6 +35,8 @@ class RhiSceneViewWidget : public QRhiWidget {
 
   /// The grid pass, exposed so demos and (later) the dock can set extent/colour.
   RhiGridPass& gridPass() { return grid_pass_; }
+  /// The TF triad pass, exposed so callers can push frame transforms.
+  RhiAxisPass& axisPass() { return axis_pass_; }
 
   /// Replace the camera model. The new model adopts the outgoing model's pose, so
   /// switching does not move the viewpoint.
@@ -83,6 +86,7 @@ class RhiSceneViewWidget : public QRhiWidget {
 
   std::unique_ptr<ICamera> camera_;
   RhiGridPass grid_pass_;
+  RhiAxisPass axis_pass_;
 
   /// Off-screen multisample HDR chain the scene renders into, plus the fullscreen
   /// pass that composites it onto the widget target. When the chain cannot be
