@@ -22,7 +22,43 @@ fi
 
 if ! command -v aqt &>/dev/null; then
   echo "Installing aqtinstall..."
-  pip install 'aqtinstall>=3.3'  # >=3.3 knows about Qt 6.11.x
+  # Some distros ship only `pip3`, so don't assume the unversioned name exists.
+  PIP=""
+  for candidate in pip3 pip; do
+    if command -v "$candidate" &>/dev/null; then
+      PIP="$candidate"
+      break
+    fi
+  done
+  if [[ -z "$PIP" ]]; then
+    echo "install_qt6.sh: no pip found. Install it (e.g. sudo apt install python3-pip)" >&2
+    echo "install_qt6.sh: or install aqtinstall yourself: pipx install aqtinstall" >&2
+    exit 1
+  fi
+
+  # PEP 668 (Ubuntu 23.04+, Debian 12+, recent Fedora) marks the system Python
+  # "externally managed" and refuses a plain `pip install` outright. Retry with
+  # the explicit opt-out instead of failing the whole setup. (On older pip the
+  # flag does not exist, but there the first attempt already succeeds.)
+  if ! "$PIP" install 'aqtinstall>=3.3'; then  # >=3.3 knows about Qt 6.11.x
+    echo "install_qt6.sh: plain pip install failed; retrying with --break-system-packages..."
+    "$PIP" install --break-system-packages 'aqtinstall>=3.3'
+  fi
+
+  # When pip cannot write to the system prefix it installs into the user base,
+  # whose bin/ is added to PATH only at login — so it is invisible to this
+  # already-running shell and the aqt call below would still fail.
+  if ! command -v aqt &>/dev/null; then
+    PATH="$(python3 -m site --user-base)/bin:${PATH}"
+    export PATH
+  fi
+fi
+
+if ! command -v aqt &>/dev/null; then
+  echo "install_qt6.sh: aqt is installed but not on PATH." >&2
+  echo "install_qt6.sh: add it for this shell and permanently, then re-run:" >&2
+  echo "  export PATH=\"\$(python3 -m site --user-base)/bin:\$PATH\"" >&2
+  exit 1
 fi
 
 echo "Installing Qt ${QT_VERSION} (${AQT_HOST}/${AQT_ARCH}) via aqtinstall..."
