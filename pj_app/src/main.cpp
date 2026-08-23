@@ -25,7 +25,8 @@
 #include "Splashscreen.h"
 #include "WidgetTuner.h"
 #include "pj_plotting/PlotWidgetBase.h"
-#include "pj_scene3d_widgets/scene_view_widget.h"  // --screenshot grabs the 3D view
+#include "pj_scene2d_widgets/media_viewer_widget.h"  // --screenshot 2D fallback
+#include "pj_scene3d_widgets/scene_view_widget.h"    // --screenshot grabs the 3D view
 #include "pj_widgets/Style.h"
 
 namespace {
@@ -115,13 +116,16 @@ int main(int argc, char* argv[]) {
           "Force plots onto the software raster canvas for this session, overriding the saved OpenGL "
           "preference (does not change it)."));
   parser.addOption(disable_opengl_option);
-  // Headless 3D capture for verification: after --screenshot-delay ms (enough for an
+  // Headless scene capture for verification: after --screenshot-delay ms (enough for an
   // async --layout load + a couple seconds of --autoplay to pose the robot), grab the
-  // first SceneViewWidget's framebuffer to a PNG and quit. GNOME Wayland blocks
-  // external screen-capture tools, so the app must grab itself.
+  // first scene view's framebuffer to a PNG and quit. GNOME Wayland blocks
+  // external screen-capture tools, so the app must grab itself. A 3D view wins when
+  // one exists; otherwise the first usable 2D viewer is grabbed, which is what makes
+  // the pj_scene2D harness (and the macOS Metal path) verifiable the same way.
   const QCommandLineOption screenshot_option(
       QStringLiteral("screenshot"),
-      QStringLiteral("Grab the first 3D view to a PNG after --screenshot-delay, then exit."), QStringLiteral("path"));
+      QStringLiteral("Grab the first 3D (else 2D) scene view to a PNG after --screenshot-delay, then exit."),
+      QStringLiteral("path"));
   parser.addOption(screenshot_option);
   const QCommandLineOption screenshot_delay_option(
       QStringLiteral("screenshot-delay"), QStringLiteral("ms to wait before the screenshot grab (default 7000)."),
@@ -228,18 +232,37 @@ int main(int argc, char* argv[]) {
     const QString path = parser.value(screenshot_option);
     const int delay_ms = parser.value(screenshot_delay_option).toInt();
     QTimer::singleShot(delay_ms, &window, [&window, path]() {
-      const QList<pj::scene3d::SceneViewWidget*> views = window.findChildren<pj::scene3d::SceneViewWidget*>();
-      if (views.isEmpty()) {
-        std::fprintf(stderr, "[screenshot] no 3D SceneViewWidget found\n");
+      // grabFramebuffer() (QOpenGLWidget's and QRhiWidget's alike) renders on demand,
+      // so it returns a fresh frame with no separate update()/second timer needed.
+      QImage img;
+      bool found_view = false;
+      const QList<pj::scene3d::SceneViewWidget*> views_3d = window.findChildren<pj::scene3d::SceneViewWidget*>();
+      if (!views_3d.isEmpty()) {
+        img = views_3d.first()->grabFramebuffer();
+        found_view = true;
+        std::printf("[screenshot] grabbed 3D SceneViewWidget\n");
       } else {
-        // grabFramebuffer() renders paintGL() on demand, so it returns a fresh frame
-        // with no separate update()/second timer needed.
-        const QImage img = views.first()->grabFramebuffer();
-        if (img.save(path)) {
-          std::printf("[screenshot] saved: %s (%dx%d)\n", qPrintable(path), img.width(), img.height());
-        } else {
-          std::fprintf(stderr, "[screenshot] save FAILED: %s\n", qPrintable(path));
+        // The 2D fallback must skip the app's ZERO-SIZE bootstrap viewers: MainWindow
+        // and Scene2DDockWidget each construct one purely to force an RHI-capable
+        // window backing store, and findChildren() returns those too. Grabbing one
+        // yields a 0x0 image that looks exactly like a renderer failure.
+        for (PJ::MediaViewerWidget* viewer : window.findChildren<PJ::MediaViewerWidget*>()) {
+          if (viewer->width() <= 1 || viewer->height() <= 1) {
+            continue;
+          }
+          img = viewer->grabFramebuffer();
+          found_view = true;
+          std::printf("[screenshot] grabbed 2D MediaViewerWidget\n");
+          break;
         }
+      }
+
+      if (!found_view) {
+        std::fprintf(stderr, "[screenshot] no 3D SceneViewWidget and no usable 2D MediaViewerWidget found\n");
+      } else if (img.save(path)) {
+        std::printf("[screenshot] saved: %s (%dx%d)\n", qPrintable(path), img.width(), img.height());
+      } else {
+        std::fprintf(stderr, "[screenshot] save FAILED: %s\n", qPrintable(path));
       }
       QCoreApplication::quit();
     });
