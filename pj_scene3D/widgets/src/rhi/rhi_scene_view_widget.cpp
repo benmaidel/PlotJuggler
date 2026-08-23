@@ -64,6 +64,16 @@ void RhiSceneViewWidget::setCamera(std::unique_ptr<ICamera> camera) {
   update();
 }
 
+void RhiSceneViewWidget::setSceneSamples(int samples) {
+  if (samples == desired_samples_) {
+    return;
+  }
+  desired_samples_ = samples;
+  // The chain is re-sized lazily in render(); dropping it now would need the QRhi
+  // to still be current, which it may not be from an arbitrary caller.
+  update();
+}
+
 std::vector<IRhiRenderPass*> RhiSceneViewWidget::passes() {
   return {&grid_pass_};
 }
@@ -85,11 +95,14 @@ void RhiSceneViewWidget::initialize(QRhiCommandBuffer* /*cb*/) {
   if (r == nullptr) {
     return;
   }
-  // A swapped QRhi invalidated every pass's objects; rebuild against the new one.
+  // A swapped QRhi invalidated every GPU object we own.
   if (rhi_cached_ != r) {
     for (IRhiRenderPass* pass : passes()) {
       pass->release();
     }
+    present_pass_.release();
+    hdr_target_.release();
+    scene_rpd_ = nullptr;
     rhi_cached_ = r;
   }
 
@@ -97,38 +110,79 @@ void RhiSceneViewWidget::initialize(QRhiCommandBuffer* /*cb*/) {
   if (rt == nullptr || rt->renderPassDescriptor() == nullptr) {
     return;
   }
-  for (IRhiRenderPass* pass : passes()) {
-    if (!pass->initialize(*r, *rt->renderPassDescriptor())) {
-      qCWarning(lcRhiView) << "a render pass failed to initialize and will be skipped this session";
-    }
+  // Only the present pass can be built here: it targets the WIDGET's render pass.
+  // The geometry passes target the off-screen HDR chain, whose descriptor does not
+  // exist until render() has sized it, so they are initialized lazily there.
+  if (!present_pass_.initialize(*r, *rt->renderPassDescriptor())) {
+    qCWarning(lcRhiView) << "present pass unavailable; falling back to direct-to-widget rendering";
   }
 }
 
 void RhiSceneViewWidget::render(QRhiCommandBuffer* cb) {
   QRhi* r = rhi();
-  QRhiRenderTarget* rt = renderTarget();
-  if (r == nullptr || cb == nullptr || rt == nullptr) {
+  QRhiRenderTarget* widget_rt = renderTarget();
+  if (r == nullptr || cb == nullptr || widget_rt == nullptr) {
     return;
   }
 
   RhiFrameContext ctx;
-  ctx.pixel_size = rt->pixelSize();
+  ctx.pixel_size = widget_rt->pixelSize();
   ctx.view_proj = buildViewProj(ctx.pixel_size);
 
-  // All uploads must be batched BEFORE the pass opens; QRhi forbids recording
-  // them once beginPass has run.
+  const bool hdr_ready = hdr_target_.ensure(*r, ctx.pixel_size, desired_samples_);
+  // The geometry pipelines are only valid for the descriptor they were built
+  // against, and the HDR chain makes a fresh one whenever it is re-created.
+  if (hdr_ready && hdr_target_.renderPassDescriptor() != scene_rpd_) {
+    for (IRhiRenderPass* pass : passes()) {
+      pass->release();
+      if (!pass->initialize(*r, *hdr_target_.renderPassDescriptor())) {
+        qCWarning(lcRhiView) << "a render pass failed to initialize and will be skipped";
+      }
+    }
+    scene_rpd_ = hdr_target_.renderPassDescriptor();
+  }
+  present_pass_.setSourceTexture(hdr_ready ? hdr_target_.resolvedColor() : nullptr);
+
+  // Every upload must be batched BEFORE a pass opens; QRhi forbids recording them
+  // inside one. Both the scene passes and the present pass contribute here.
   QRhiResourceUpdateBatch* updates = r->nextResourceUpdateBatch();
   for (IRhiRenderPass* pass : passes()) {
     pass->prepare(*updates, ctx);
   }
+  present_pass_.prepare(*updates, ctx);
 
-  cb->beginPass(rt, QColor::fromRgbF(kClearR, kClearG, kClearB), {1.0F, 0}, updates);
-  cb->setViewport({0.0F, 0.0F, static_cast<float>(ctx.pixel_size.width()),
-                   static_cast<float>(ctx.pixel_size.height())});
-  for (IRhiRenderPass* pass : passes()) {
-    pass->draw(*cb, ctx);
+  const QColor clear = QColor::fromRgbF(kClearR, kClearG, kClearB);
+  used_hdr_chain_ = hdr_ready && hdr_target_.renderTarget() != nullptr;
+
+  if (used_hdr_chain_) {
+    // Scene into the off-screen multisample chain. Resolve to single-sample
+    // happens implicitly at endPass, driven by the attachment's resolveTexture.
+    cb->beginPass(hdr_target_.renderTarget(), clear, {1.0F, 0}, updates);
+    cb->setViewport({0.0F, 0.0F, static_cast<float>(ctx.pixel_size.width()),
+                     static_cast<float>(ctx.pixel_size.height())});
+    for (IRhiRenderPass* pass : passes()) {
+      pass->draw(*cb, ctx);
+    }
+    cb->endPass();
+
+    // Composite onto the widget's own target. The clear colour is irrelevant here
+    // because the fullscreen triangle covers every pixel.
+    cb->beginPass(widget_rt, clear, {1.0F, 0});
+    cb->setViewport({0.0F, 0.0F, static_cast<float>(ctx.pixel_size.width()),
+                     static_cast<float>(ctx.pixel_size.height())});
+    present_pass_.draw(*cb, ctx);
+    cb->endPass();
+  } else {
+    // Fallback: straight into the widget target. Loses MSAA and the HDR buffer but
+    // still shows the scene, which beats a blank dock.
+    cb->beginPass(widget_rt, clear, {1.0F, 0}, updates);
+    cb->setViewport({0.0F, 0.0F, static_cast<float>(ctx.pixel_size.width()),
+                     static_cast<float>(ctx.pixel_size.height())});
+    for (IRhiRenderPass* pass : passes()) {
+      pass->draw(*cb, ctx);
+    }
+    cb->endPass();
   }
-  cb->endPass();
   has_rendered_ = true;
 }
 
@@ -136,6 +190,9 @@ void RhiSceneViewWidget::releaseResources() {
   for (IRhiRenderPass* pass : passes()) {
     pass->release();
   }
+  present_pass_.release();
+  hdr_target_.release();
+  scene_rpd_ = nullptr;
   rhi_cached_ = nullptr;
 }
 

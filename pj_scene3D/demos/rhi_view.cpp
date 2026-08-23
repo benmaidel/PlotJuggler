@@ -18,6 +18,7 @@
 #include <QColor>
 #include <QDeadlineTimer>
 #include <QImage>
+#include <QSet>
 #include <QString>
 #include <cstdio>
 
@@ -99,7 +100,19 @@ int main(int argc, char** argv) {
       }
     }
   }
+  // Count distinct greys along a horizontal scanline crossing several grid lines.
+  // Aliased lines give ~2 tones (line + background); MSAA fills in intermediates,
+  // so this separates "the chain ran" from "the chain actually anti-aliased".
+  QSet<int> tones;
+  const int probe_y = frame.height() * 3 / 4;
+  for (int x = 0; x < frame.width(); ++x) {
+    tones.insert(frame.pixelColor(x, probe_y).green());
+  }
+
   std::printf("rhi_view: saved %s (%dx%d), %d non-background sample(s)\n", qPrintable(out), frame.width(),
               frame.height(), drawn);
+  std::printf("rhi_view: hdr_chain=%s scene_samples=%d distinct_tones_on_scanline=%d\n",
+              view.usedHdrChain() ? "yes" : "NO (direct-to-widget fallback)", view.sceneSamples(),
+              static_cast<int>(tones.size()));
   return drawn > 0 ? 0 : 2;
 }

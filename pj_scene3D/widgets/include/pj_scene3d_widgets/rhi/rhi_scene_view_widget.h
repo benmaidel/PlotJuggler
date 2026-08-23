@@ -9,6 +9,8 @@
 
 #include "pj_scene3d_core/camera/camera.h"
 #include "pj_scene3d_widgets/rhi/rhi_grid_pass.h"
+#include "pj_scene3d_widgets/rhi/rhi_hdr_target.h"
+#include "pj_scene3d_widgets/rhi/rhi_present_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_render_pass.h"
 
 namespace pj::scene3d::rhi {
@@ -42,6 +44,16 @@ class RhiSceneViewWidget : public QRhiWidget {
   /// what a headless check should wait on before grabbing the framebuffer.
   [[nodiscard]] bool hasRendered() const { return has_rendered_; }
 
+  /// Requested MSAA level for the off-screen chain. Independent of the widget's
+  /// own sampleCount, which is 1 once composited in a dock — that is precisely
+  /// why the anti-aliasing has to live on a target this widget owns.
+  void setSceneSamples(int samples);
+  [[nodiscard]] int sceneSamples() const { return hdr_target_.sampleCount(); }
+
+  /// True when the frame went through the off-screen HDR chain rather than the
+  /// direct-to-widget fallback. Lets a headless check assert which path ran.
+  [[nodiscard]] bool usedHdrChain() const { return used_hdr_chain_; }
+
  protected:
   void initialize(QRhiCommandBuffer* cb) override;
   void render(QRhiCommandBuffer* cb) override;
@@ -71,6 +83,19 @@ class RhiSceneViewWidget : public QRhiWidget {
 
   std::unique_ptr<ICamera> camera_;
   RhiGridPass grid_pass_;
+
+  /// Off-screen multisample HDR chain the scene renders into, plus the fullscreen
+  /// pass that composites it onto the widget target. When the chain cannot be
+  /// built the widget draws the scene straight into its own target instead, which
+  /// costs MSAA and HDR but still shows the scene.
+  RhiHdrTarget hdr_target_;
+  RhiPresentPass present_pass_;
+  int desired_samples_ = 4;
+  bool used_hdr_chain_ = false;
+  /// Render pass descriptor the geometry passes were last initialized against.
+  /// The HDR chain re-creates its descriptor on resize, and a pipeline is only
+  /// valid for the descriptor it was built with, so a change forces a rebuild.
+  QRhiRenderPassDescriptor* scene_rpd_ = nullptr;
 
   /// Last cursor position for drag-to-orbit, in logical pixels.
   QPoint last_cursor_;
