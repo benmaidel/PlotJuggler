@@ -71,6 +71,7 @@ set(PJ_SCENE3D_WIDGETS_SOURCES
   src/resolve_object.cpp
   src/url_fetcher.cpp
   src/Scene3DDockWidget.cpp
+  src/Scene3DRhiPreviewDock.cpp
   src/transform_service.cpp
   src/hud_overlay.cpp
   # QRhi renderer headers. Listed here (not only in src/) because AUTOMOC in
@@ -118,6 +119,7 @@ set(PJ_SCENE3D_WIDGETS_SOURCES
   include/pj_scene3d_widgets/mesh_shading_params.h
   include/pj_scene3d_widgets/object_topic_metadata.h
   include/pj_scene3d_widgets/Scene3DDockWidget.h
+  include/pj_scene3d_widgets/Scene3DRhiPreviewDock.h
   include/pj_scene3d_widgets/transform_service.h
   include/pj_scene3d_widgets/parse_locked.h
 )

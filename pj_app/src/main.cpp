@@ -25,8 +25,9 @@
 #include "Splashscreen.h"
 #include "WidgetTuner.h"
 #include "pj_plotting/PlotWidgetBase.h"
-#include "pj_scene2d_widgets/media_viewer_widget.h"  // --screenshot 2D fallback
-#include "pj_scene3d_widgets/scene_view_widget.h"    // --screenshot grabs the 3D view
+#include "pj_scene2d_widgets/media_viewer_widget.h"        // --screenshot 2D fallback
+#include "pj_scene3d_widgets/rhi/rhi_scene_view_widget.h"  // --screenshot grabs the QRhi 3D view
+#include "pj_scene3d_widgets/scene_view_widget.h"          // --screenshot grabs the 3D view
 #include "pj_widgets/Style.h"
 
 namespace {
@@ -237,10 +238,19 @@ int main(int argc, char* argv[]) {
       QImage img;
       bool found_view = false;
       const QList<pj::scene3d::SceneViewWidget*> views_3d = window.findChildren<pj::scene3d::SceneViewWidget*>();
+      const QList<pj::scene3d::rhi::RhiSceneViewWidget*> views_rhi =
+          window.findChildren<pj::scene3d::rhi::RhiSceneViewWidget*>();
       if (!views_3d.isEmpty()) {
         img = views_3d.first()->grabFramebuffer();
         found_view = true;
         std::printf("[screenshot] grabbed 3D SceneViewWidget\n");
+      } else if (!views_rhi.isEmpty()) {
+        // The QRhi renderer (PJ_SCENE3D_RHI). Checked after the OpenGL view because
+        // the two are mutually exclusive in practice — the preview replaces the real
+        // dock — so order only decides which wins if that ever stops holding.
+        img = views_rhi.first()->grabFramebuffer();
+        found_view = true;
+        std::printf("[screenshot] grabbed 3D RhiSceneViewWidget\n");
       } else {
         // The 2D fallback must skip the app's ZERO-SIZE bootstrap viewers: MainWindow
         // and Scene2DDockWidget each construct one purely to force an RHI-capable
@@ -258,7 +268,8 @@ int main(int argc, char* argv[]) {
       }
 
       if (!found_view) {
-        std::fprintf(stderr, "[screenshot] no 3D SceneViewWidget and no usable 2D MediaViewerWidget found\n");
+        std::fprintf(
+            stderr, "[screenshot] no 3D scene view (OpenGL or QRhi) and no usable 2D MediaViewerWidget found\n");
       } else if (img.save(path)) {
         std::printf("[screenshot] saved: %s (%dx%d)\n", qPrintable(path), img.width(), img.height());
       } else {

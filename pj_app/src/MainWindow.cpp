@@ -111,6 +111,7 @@
 #include "pj_scene2d_widgets/Scene2DDockWidget.h"
 #include "pj_scene2d_widgets/media_viewer_widget.h"
 #include "pj_scene3d_widgets/Scene3DDockWidget.h"
+#include "pj_scene3d_widgets/Scene3DRhiPreviewDock.h"
 #include "pj_scene3d_widgets/transform_service.h"
 #include "pj_scene_common/scene_dock_widget.h"
 #include "pj_widgets/CoalescingTrigger.h"
@@ -1285,6 +1286,17 @@ IDataWidget* MainWindow::makeSceneDock(const QString& kind, QWidget* parent) {
   // and layout-restore paths. Wiring (session / transform service / theme) is
   // identical regardless of how the dock is later populated.
   if (kind == QStringLiteral("scene3d")) {
+    // Developer opt-in (PJ_SCENE3D_RHI): build the QRhi/Metal preview instead. It
+    // deliberately hijacks the real 3D kind rather than adding a family, so the
+    // preview travels the app's genuine dock creation, float/split and
+    // layout-restore paths — which is the whole point of it. See
+    // Scene3DRhiPreviewDock for why the real dock cannot simply swap renderers.
+    if (pj::scene3d::Scene3DRhiPreviewDock::enabled()) {
+      auto* preview = new pj::scene3d::Scene3DRhiPreviewDock(parent);
+      preview->setSessionManager(&session_->sessionManager());
+      preview->setTransformService(transform_service_.get());
+      return preview;
+    }
     auto* widget = new Scene3DDockWidget(parent);
     widget->setSessionManager(&session_->sessionManager());
     widget->setTransformService(transform_service_.get());

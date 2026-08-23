@@ -202,6 +202,12 @@ full mechanism.
   the data-source plugin's manifest `name` and a config payload carrying its own
   absolute `filepath`.
 
+`Scene3DRhiPreviewDock` (opt-in via the `PJ_SCENE3D_RHI` environment variable) hosts
+the QRhi renderer inside the running app, in place of the real 3D dock, drawing the
+TF overlay + grid only. It exists to de-risk the eventual renderer swap — see
+`docs/ARCHITECTURE.md` for why the real dock cannot simply swap backends (all seven
+layer types fuse decode with GL upload).
+
 The QRhi/Metal port has its own verification harness: `demos/rhi_view.cpp`
 (`scene3d_rhi_view`) renders one frame headlessly to a PNG and reports coverage and
 tone counts. When a ported pass draws nothing, temporarily returning only that pass

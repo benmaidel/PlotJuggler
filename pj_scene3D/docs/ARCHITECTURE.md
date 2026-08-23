@@ -65,8 +65,60 @@ exactly the class of bug QRhi does not report:
    Metal, so the design carries over unchanged.
 4. The compute AABB reducer → `QRhiComputePipeline`, keeping the documented CPU
    fallback for backends without compute.
-5. Wiring `RhiSceneViewWidget` into `Scene3DDockWidget` behind a flag; today only
-   the demo drives it.
+5. **Making the QRhi renderer render topic DATA in the app.** It is already
+   reachable in the app — `Scene3DRhiPreviewDock` (opt-in via `PJ_SCENE3D_RHI`)
+   hosts it in a real dock and draws the TF overlay plus the grid from the live
+   `TransformService`. What is missing is everything driven by layers, and that is
+   blocked on a genuine architectural prerequisite rather than on wiring:
+
+   `Scene3DDockWidget` drives its content through `Scene3DLayer`, and all seven
+   layer types **fuse decoding with OpenGL upload** — each implements
+   `initializeGL()` / `render(ViewParams, FrameContext)` and owns GL `IRenderPass`
+   objects internally, with no seam exposing the decoded render structs. So the real
+   dock cannot simply swap renderers underneath. The unlock is to split decode from
+   upload across those layers (each exposing its decoded struct plus render key, with
+   a backend-specific binder driving GL or QRhi passes), which is a workstream of its
+   own and is why the preview dock exists in the meantime.
+
+### Scene3DRhiPreviewDock — what it is for
+
+A developer preview, opt-in via `PJ_SCENE3D_RHI`, that puts the QRhi renderer inside
+the running app. It deliberately hijacks the `scene3d` dock kind rather than adding a
+visualization family, so it travels the app's genuine dock creation, drop,
+float/split and layout-restore paths instead of a side door — which is the entire
+point of it.
+
+It exists to de-risk the item above. The OpenGL view's worst historical bugs were all
+context recreation on ADS reparent (see the module `CLAUDE.md`), and `QRhiWidget` has
+its own version of that in `releaseResources()`. Confirming a QRhiWidget survives the
+app's docking lifecycle is worth doing *before* porting seven layers on top of it.
+
+Verified on macOS/Metal, both headlessly via `tools/screenshot_3d.sh` with
+`PJ_SCENE3D_RHI=1` and interactively: the view renders inside a restored ADS dock,
+resolves the fixture's real TF tree (3 frames, 2 parent edges) against the live
+`TransformService`, and **survives splitting the dock horizontally and vertically** —
+the reparent path that historically broke the OpenGL view. Note that floating is not
+a case to test: `DockWidget` disables it outright
+(`setFeature(DockWidgetFloatable, false)`), so split, tab switch, close/recreate and
+layout restore are the only reparent paths PJ4 has.
+
+**It also fixes a real macOS defect, not just a portability gap.** The OpenGL 3D dock
+on macOS corrupts the whole window — the entire UI is composited a second time,
+vertically mirrored, over itself. That artifact is absent from the `QOpenGLWidget`'s
+own `grabFramebuffer()` output, which localises it to how macOS/Qt composites that
+widget into the ADS dock rather than to anything the renderer draws; switching the
+same dock to `QRhiWidget`/Metal makes it disappear. So the payoff for finishing the
+port is a *working* macOS 3D view, not parity for its own sake.
+
+Two lifecycle traps it already surfaced, both worth knowing generally:
+
+- A TF buffer is routinely bound *before* its transforms are ingested, so the frame
+  hierarchy read at bind time is empty. The fixed frame therefore has to be
+  re-chosen on later refreshes, or the view stays blank forever.
+- `Qt::UniqueConnection` **silently does nothing for a lambda slot** (it needs a
+  pointer-to-member, and Qt only emits a runtime warning). Connections to lambdas
+  must be de-duplicated by holding the `QMetaObject::Connection` and disconnecting
+  explicitly, which is what `Scene3DDockWidget` already does.
 
 ### EDL is deliberately not ported (decision, 2026-08-23)
 

@@ -34,10 +34,15 @@
 #                       per-plugin Release/bin dirs of ../pj-official-plugins)
 #   PJ_FIXTURE          fixture path (default <repo>/build/scene3d_fixture.mcap)
 #
-# NOTE ON macOS: the 3D view is intentionally disabled there (SceneViewWidget
+# NOTE ON macOS: the OpenGL view is intentionally disabled there (SceneViewWidget
 # finds no OpenGL 4.5 core context and paints a "3D view unavailable"
 # placeholder), so a successful macOS run screenshots THAT placeholder. That is
 # the expected result and doubles as a check that the guard still works.
+#
+# To exercise the QRhi/Metal renderer inside the app instead, set PJ_SCENE3D_RHI=1:
+# the shell then builds Scene3DRhiPreviewDock in place of the real 3D dock and the
+# grab lands on a live Metal render. That preview draws the TF overlay and the grid
+# only — it has no layers, so no clouds/meshes/markers — see the class doc for why.
 
 set -euo pipefail
 
