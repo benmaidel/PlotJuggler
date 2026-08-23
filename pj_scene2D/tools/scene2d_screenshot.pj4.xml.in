@@ -1,0 +1,58 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Copyright 2026 Davide Faconti
+  SPDX-License-Identifier: MPL-2.0
+
+  Layout template for the headless 2D screenshot harness. screenshot_2d.sh
+  substitutes the @TOKENS@ and writes the result into build/; the app's layout
+  option expects the substituted file, never this .in template.
+
+  Keep XML comments free of double hyphens: XML forbids them inside a comment,
+  and QDomDocument rejects the whole layout with a parse error that the app
+  reports only through a modal warning. Since that warning does not block a
+  headless run, a malformed layout looks exactly like "nothing happened".
+
+  Tokens:
+    @MCAP_PATH@       absolute path of the generated MCAP fixture
+    @DATASET_SOURCE@  the fixture's file NAME (basename) — DataEngine's
+                      DatasetInfo::source_name is the basename, and the scene
+                      dock re-resolves its layers by that name (DatasetIds are
+                      a per-session load-order counter, not stable identity).
+
+  Schema notes (see pj_app/src/MainWindow.cpp + pj_scene_common/src/scene_dock_widget.cpp):
+    * <previouslyLoaded_Datafiles>/<fileInfo> drives the startup reload. The
+      <plugin> child is what makes the load NON-INTERACTIVE: FileLoader sets
+      skip_dialog only when BOTH the plugin ID and a config payload are present,
+      and the ID must equal the plugin's manifest "name" ("MCAP Loader"), not its
+      id. Get that wrong and the topic-selection dialog reappears, which stalls
+      the harness until it times out.
+    * A hint-eligible preset is handed to the plugin VERBATIM, so the CDATA
+      config must carry its own absolute "filepath", agreeing with the fileInfo
+      filename.
+    * The dock tree is <tabbed_widget>/<Tab>/<Container>/<DockArea>. The DockArea
+      child element's TAG is the dock factory "kind"; "scene2d" maps to
+      Scene2DDockWidget. The <layer> element and its attribute set come from the
+      shared SceneDockWidget base in pj_scene_common, so they are identical to
+      the 3D harness layout's. object_type strings are sdk::name(BuiltinObjectType)
+      values, hence "kImage".
+-->
+<root format="PlotJuggler" pj4_version="3" binding="source">
+  <tabbed_widget name="Main Window" parent="main_window">
+    <Tab tab_name="2D" id="scene2d-harness-tab" containers="1">
+      <Container>
+        <DockArea id="scene2d-harness-dock" name="2D View">
+          <scene2d version="1">
+            <layer dataset_id="1" dataset_source="@DATASET_SOURCE@" topic_name="/image"
+                   object_type="kImage" display_name="/image" visible="true"/>
+          </scene2d>
+        </DockArea>
+      </Container>
+    </Tab>
+    <currentTabIndex index="0"/>
+  </tabbed_widget>
+  <previouslyLoaded_Datafiles>
+    <fileInfo filename="@MCAP_PATH@" prefix="" display_offset_ns="0" timeline_order="0">
+      <plugin ID="MCAP Loader"><![CDATA[{"filepath":"@MCAP_PATH@","max_array_size":500,"clamp_large_arrays":true,"use_log_time":false,"use_header_timestamp":false,"selected_topics":["/image"]}]]></plugin>
+    </fileInfo>
+  </previouslyLoaded_Datafiles>
+</root>

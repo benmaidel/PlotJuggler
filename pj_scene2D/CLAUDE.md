@@ -66,6 +66,35 @@ Read in this order:
 - `widgets/include/pj_scene2d_widgets/media_viewer_widget.h` — the `QRhiWidget` renderer (YUV/RGB pipelines + annotation overlays).
 - `widgets/include/pj_scene2d_widgets/Scene2DDockWidget.h` — the dock widget wiring layers into `pj_scene_common`'s `SceneDockWidget`.
 
+## `tools/`
+
+Two kinds of thing live here, and only one of them compiles:
+
+- `extract_frame.cpp` — an opt-in standalone dev utility, gated by
+  `PJ_BUILD_TOOLS` (OFF by default) in `tools/CMakeLists.txt`.
+- **Non-compiled** scripts, registered in no CMake target: the headless
+  visual-verification harness. `screenshot_2d.sh` launches `plotjuggler4` with a
+  canned layout (`scene2d_screenshot.pj4.xml.in`, `@TOKEN@`-substituted at run
+  time) that opens a 2D dock over a synthetic MCAP, then grabs the
+  `MediaViewerWidget` framebuffer to a PNG through the app's own `--screenshot`
+  (which prefers a 3D `SceneViewWidget` and falls back to the first *non-degenerate*
+  2D viewer — it must skip the zero-size RHI-bootstrap viewers `MainWindow` and
+  `Scene2DDockWidget` create, or it grabs a 0x0 image). The fixture comes from the
+  **shared** generator `pj_scene3D/tools/generate_scene3d_fixture.py`, which writes
+  `/image` (a 320x240 `rgb8` test card) beside `/tf` and `/points`, so one fixture
+  feeds both the 2D and 3D harnesses; `--verify` there re-decodes the CDR with an
+  independent reader.
+
+  Why it exists: `MediaViewerWidget` is a `QRhiWidget`, so this is the only
+  end-to-end proof that a decoded image reaches the screen on a given RHI backend.
+  A *bare* offscreen `MediaViewerWidget` in a gtest cannot do that job — an
+  unexposed test window grabs all-black on every backend, so it cannot tell a
+  renderer bug from a harness artifact. Drive the real app instead. The test card
+  is deliberately asymmetric (colour bars, a top-left→bottom-right diagonal, one
+  filled corner square) so a flipped, mirrored or R/B-swapped render cannot pass;
+  the generator's `image_test_card()` is the reference to diff a grab against.
+  Confirmed on macOS/Metal: pixel-exact.
+
 ## Working conventions
 
 - Run the module tests and make sure they pass before any commit.

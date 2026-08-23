@@ -186,8 +186,12 @@ full mechanism.
   headless visual-verification harness:
   `screenshot_3d.sh` launches `plotjuggler4` with a canned layout that opens a 3D
   dock over a synthetic MCAP (`generate_scene3d_fixture.py` writes `/tf` +
-  `/points`, ROS 2 CDR), then grabs the first `SceneViewWidget` framebuffer to a
-  PNG via the app's own `--screenshot`. Its value is as the repeatable
+  `/points` + an `/image` test card, ROS 2 CDR; `--no-image` drops the card and
+  `--verify` re-decodes it with an independent CDR reader), then grabs the first
+  `SceneViewWidget` framebuffer to a PNG via the app's own `--screenshot`. That
+  ONE generator also feeds the sibling 2D harness (`pj_scene2D/tools/screenshot_2d.sh`),
+  whose layout simply selects `/image` instead of `/tf` + `/points` — keep the
+  generator's topic set a superset of both harnesses' needs. Its value is as the repeatable
   before/after check for the OpenGL → QRhi/Metal port; on macOS today it captures
   the "3D view unavailable" placeholder, which is the correct result and also
   proves the OpenGL-4.5 guard still fires. The layout template

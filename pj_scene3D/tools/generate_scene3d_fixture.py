@@ -1,11 +1,13 @@
 #!/usr/bin/env python3
 # Copyright 2026 Davide Faconti
 # SPDX-License-Identifier: MPL-2.0
-"""Generate the synthetic MCAP fixture used by the headless 3D screenshot harness.
+"""Generate the synthetic MCAP fixture used by the headless screenshot harnesses.
 
-The fixture is the smallest recording that exercises the two data paths a 3D
-scene needs — a TF tree and a dense point cloud — so a screenshot taken by
-``screenshot_3d.sh`` is a meaningful visual check of the renderer:
+ONE fixture serves BOTH the 3D harness (``pj_scene3D/tools/screenshot_3d.sh``)
+and the 2D harness (``pj_scene2D/tools/screenshot_2d.sh``), so a single run of
+this script is enough to exercise either renderer. It is the smallest recording
+that covers the data paths those scenes need — a TF tree, a dense point cloud
+and a colour image — so a screenshot is a meaningful visual check:
 
   ``/tf``     ``tf2_msgs/msg/TFMessage``     world -> base_link -> sensor,
               20 Hz for 5 s. ``base_link`` drives a circle around the origin
@@ -14,6 +16,15 @@ scene needs — a TF tree and a dense point cloud — so a screenshot taken by
   ``/points`` ``sensor_msgs/msg/PointCloud2``  a 2000-point spiral shell in the
               ``sensor`` frame, 5 Hz for 5 s. Fields are x/y/z/intensity, all
               FLOAT32 (``PointField.datatype == 7``), ``point_step`` 16.
+  ``/image``  ``sensor_msgs/msg/Image``       a 320x240 ``rgb8`` test card,
+              10 Hz for 5 s. Suppress it with ``--no-image``.
+
+The test card is deliberately ASYMMETRIC — eight vertical colour bars, a thick
+top-left-to-bottom-right diagonal, and one filled square in the BOTTOM-LEFT
+corner — because a symmetric card cannot tell a correct render from one that is
+vertically flipped or has its R and B channels swapped. Every frame carries the
+same pixels, so a screenshot is comparable run to run no matter which sample the
+tracker happens to sit on.
 
 Encoding conventions match the sibling generator in pj-official-plugins
 (``data_load_mcap/test_data/generate_verification_mcaps.py``): schemas are
@@ -30,7 +41,13 @@ MCAP writer) so the fixture stays well under 1 MB and can be regenerated in
 under a second rather than committed as a binary.
 
 Usage:
-    generate_scene3d_fixture.py [OUTPUT.mcap]
+    generate_scene3d_fixture.py [OUTPUT.mcap] [--no-image] [--verify]
+
+``--verify`` re-reads the written file with the independent positional CDR
+reader below and asserts the ``/image`` messages round-trip exactly (field
+values, ``step == width*3``, and no trailing bytes), which is the only way to
+catch a silent CDR alignment mistake — a misaligned field still "renders",
+just as garbage.
 
 Default output: ``<repo>/build/scene3d_fixture.mcap`` (a build artifact, never
 committed). Requires: ``pip3 install --break-system-packages mcap``.
@@ -38,9 +55,9 @@ committed). Requires: ``pip3 install --break-system-packages mcap``.
 
 from __future__ import annotations
 
+import argparse
 import math
 import struct
-import sys
 from pathlib import Path
 
 from mcap.writer import Writer
@@ -189,8 +206,37 @@ uint8 datatype
 uint32 count
 """
 
+SCHEMA_IMAGE = b"""std_msgs/Header header
+uint32 height
+uint32 width
+string encoding
+uint8 is_bigendian
+uint32 step
+uint8[] data
+================================================================================
+MSG: std_msgs/Header
+builtin_interfaces/Time stamp
+string frame_id
+================================================================================
+MSG: builtin_interfaces/Time
+int32 sec
+uint32 nanosec
+"""
+
 #: sensor_msgs/PointField.FLOAT32
 PF_FLOAT32 = 7
+
+#: Geometry of the ``/image`` test card. 320x240 keeps the fixture small while
+#: leaving every feature (40 px bars, 48 px corner square) comfortably legible
+#: in a screenshot.
+IMAGE_WIDTH = 320
+IMAGE_HEIGHT = 240
+IMAGE_ENCODING = "rgb8"
+#: rgb8 is 3 bytes/pixel and the card is tightly packed, so step == width * 3.
+IMAGE_BYTES_PER_PIXEL = 3
+#: Header frame_id. Matches the point cloud's frame so a future CameraInfo-based
+#: 3D consumer could join them; the 2D viewer ignores it.
+IMAGE_FRAME_ID = "sensor"
 
 # ---------------------------------------------------------------------------
 # Message builders
@@ -266,6 +312,74 @@ def spiral_shell_points(count: int, phase: float) -> bytes:
     return bytes(raw)
 
 
+#: Eight vertical bars, left to right. R and B sit at different positions on
+#: purpose: a BGR-vs-RGB channel swap moves them, so it cannot hide.
+BAR_COLORS = (
+    (255, 0, 0),      # red
+    (0, 255, 0),      # green
+    (0, 0, 255),      # blue
+    (255, 255, 255),  # white
+    (0, 0, 0),        # black
+    (255, 255, 0),    # yellow
+    (0, 255, 255),    # cyan
+    (255, 0, 255),    # magenta
+)
+
+#: Colour of the diagonal and the corner square: absent from BAR_COLORS, so both
+#: features stay readable wherever they land.
+MARKER_COLOR = (255, 128, 0)  # orange
+
+#: Half-thickness (px) of the diagonal, measured perpendicular-ish along x.
+DIAGONAL_HALF_WIDTH = 5
+#: Side (px) of the filled square anchored in the BOTTOM-LEFT corner.
+CORNER_SQUARE = 48
+
+
+def image_test_card(width: int = IMAGE_WIDTH, height: int = IMAGE_HEIGHT) -> bytes:
+    """Tightly packed ``rgb8`` bytes, row 0 first (ROS raster order: top row first).
+
+    Deliberately asymmetric in both axes so a screenshot distinguishes a correct
+    render from a flipped, mirrored or channel-swapped one:
+
+      * eight vertical colour bars (red at x=0 ... magenta at x=width)
+      * a thick diagonal from the TOP-LEFT to the BOTTOM-RIGHT corner
+      * a filled square in the BOTTOM-LEFT corner only
+
+    A vertical flip turns the diagonal into a "/" and lifts the square to the
+    top-left; a horizontal mirror moves the red bar to the right edge; an R/B
+    swap turns the leftmost bar blue. None of those survive inspection.
+    """
+    bar_width = width / len(BAR_COLORS)
+    raw = bytearray()
+    for y in range(height):
+        # x of the diagonal on this row: 0 at the top row, width-1 at the bottom.
+        diagonal_x = y * (width - 1) / (height - 1)
+        in_square_rows = y >= height - CORNER_SQUARE
+        for x in range(width):
+            if in_square_rows and x < CORNER_SQUARE:
+                color = MARKER_COLOR
+            elif abs(x - diagonal_x) <= DIAGONAL_HALF_WIDTH:
+                color = MARKER_COLOR
+            else:
+                color = BAR_COLORS[min(int(x / bar_width), len(BAR_COLORS) - 1)]
+            raw.extend(color)
+    return bytes(raw)
+
+
+def image_message(stamp_ns: int, frame_id: str, width: int, height: int, pixels: bytes) -> bytes:
+    """sensor_msgs/msg/Image. Field order per the .msg: header, height, width,
+    encoding, is_bigendian, step, data."""
+    cdr = CdrWriter()
+    write_header(cdr, stamp_ns, frame_id)
+    cdr.uint32(height)
+    cdr.uint32(width)
+    cdr.string(IMAGE_ENCODING)
+    cdr.uint8(0)  # is_bigendian: the pattern is byte-per-channel, so moot
+    cdr.uint32(width * IMAGE_BYTES_PER_PIXEL)  # step
+    cdr.uint8_sequence(pixels)
+    return cdr.bytes()
+
+
 def point_cloud2(stamp_ns: int, frame_id: str, points: bytes, point_count: int) -> bytes:
     point_step = 16  # 4 x float32
     cdr = CdrWriter()
@@ -287,12 +401,122 @@ def point_cloud2(stamp_ns: int, frame_id: str, points: bytes, point_count: int) 
 
 
 # ---------------------------------------------------------------------------
+# Verification
+# ---------------------------------------------------------------------------
 
 
-def generate(path: Path) -> None:
+class CdrReader:
+    """Positional little-endian CDR decoder, written independently of CdrWriter.
+
+    Deliberately NOT sharing code with the writer: a reader that mirrors the
+    writer's own alignment bug agrees with it and proves nothing. This one
+    tracks an absolute cursor and derives alignment from the payload start (the
+    byte after the 4-byte encapsulation header), which is the rule the spec
+    states — so a writer that forgot a pad shows up here as a wrong value or as
+    leftover trailing bytes.
+    """
+
+    def __init__(self, raw: bytes) -> None:
+        if len(raw) < 4:
+            raise ValueError("CDR payload shorter than its encapsulation header")
+        self._raw = raw
+        self._base = 4  # payload start == alignment origin
+        self._pos = 4
+
+    def _align(self, size: int) -> None:
+        pad = (self._pos - self._base) % size
+        if pad:
+            self._pos += size - pad
+
+    def uint8(self) -> int:
+        value = self._raw[self._pos]
+        self._pos += 1
+        return value
+
+    def int32(self) -> int:
+        self._align(4)
+        (value,) = struct.unpack_from("<i", self._raw, self._pos)
+        self._pos += 4
+        return value
+
+    def uint32(self) -> int:
+        self._align(4)
+        (value,) = struct.unpack_from("<I", self._raw, self._pos)
+        self._pos += 4
+        return value
+
+    def string(self) -> str:
+        length = self.uint32()  # INCLUDES the NUL
+        raw = self._raw[self._pos : self._pos + length]
+        self._pos += length
+        if not raw.endswith(b"\x00"):
+            raise ValueError("CDR string not NUL-terminated")
+        return raw[:-1].decode("utf-8")
+
+    def uint8_sequence(self) -> bytes:
+        count = self.uint32()
+        raw = self._raw[self._pos : self._pos + count]
+        if len(raw) != count:
+            raise ValueError(f"sequence truncated: wanted {count}, have {len(raw)}")
+        self._pos += count
+        return raw
+
+    def remaining(self) -> int:
+        return len(self._raw) - self._pos
+
+
+def verify_image_messages(path: Path, expected_pixels: bytes) -> int:
+    """Re-read every ``/image`` message and assert it decodes byte-exactly.
+
+    Returns the number of messages checked; raises AssertionError on the first
+    mismatch. Cheap enough to run on every generation.
+    """
+    from mcap.reader import make_reader
+
+    checked = 0
+    with path.open("rb") as handle:
+        for schema, channel, message in make_reader(handle).iter_messages(topics=["/image"]):
+            assert schema is not None and schema.name == "sensor_msgs/msg/Image", schema
+            assert schema.encoding == "ros2msg", schema.encoding
+            assert channel.message_encoding == "cdr", channel.message_encoding
+
+            reader = CdrReader(message.data)
+            sec = reader.int32()
+            nanosec = reader.uint32()
+            frame_id = reader.string()
+            height = reader.uint32()
+            width = reader.uint32()
+            encoding = reader.string()
+            is_bigendian = reader.uint8()
+            step = reader.uint32()
+            data = reader.uint8_sequence()
+
+            stamp_ns = sec * 1_000_000_000 + nanosec
+            assert stamp_ns == message.log_time, (stamp_ns, message.log_time)
+            assert frame_id == IMAGE_FRAME_ID, frame_id
+            assert (width, height) == (IMAGE_WIDTH, IMAGE_HEIGHT), (width, height)
+            assert encoding == IMAGE_ENCODING, encoding
+            assert is_bigendian == 0, is_bigendian
+            assert step == width * IMAGE_BYTES_PER_PIXEL, (step, width)
+            assert len(data) == step * height, (len(data), step * height)
+            assert data == expected_pixels, "pixel bytes did not round-trip"
+            # The tell for a bogus alignment pad: the reader must land exactly on
+            # the end of the payload, having consumed every byte the writer wrote.
+            assert reader.remaining() == 0, f"{reader.remaining()} trailing byte(s)"
+            checked += 1
+
+    assert checked > 0, "no /image messages found to verify"
+    return checked
+
+
+# ---------------------------------------------------------------------------
+
+
+def generate(path: Path, include_image: bool = True) -> None:
     duration_s = 5.0
     tf_hz = 20.0
     cloud_hz = 5.0
+    image_hz = 10.0
     point_count = 2000
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -313,6 +537,15 @@ def generate(path: Path) -> None:
         cloud_channel = writer.register_channel(
             topic="/points", message_encoding="cdr", schema_id=cloud_schema
         )
+
+        image_channel = None
+        if include_image:
+            image_schema = writer.register_schema(
+                name="sensor_msgs/msg/Image", encoding="ros2msg", data=SCHEMA_IMAGE
+            )
+            image_channel = writer.register_channel(
+                topic="/image", message_encoding="cdr", schema_id=image_schema
+            )
 
         tf_count = int(duration_s * tf_hz)
         for index in range(tf_count):
@@ -341,12 +574,28 @@ def generate(path: Path) -> None:
                 ),
             )
 
+        image_count = 0
+        if image_channel is not None:
+            # One shared payload for every frame: the pattern is time-invariant by
+            # design (see the module docstring), and reusing the bytes keeps both
+            # the generation cost and the zstd-chunked file size down.
+            pixels = image_test_card()
+            image_count = int(duration_s * image_hz)
+            for index in range(image_count):
+                stamp_ns = int(index / image_hz * 1e9)
+                writer.add_message(
+                    channel_id=image_channel,
+                    log_time=stamp_ns,
+                    publish_time=stamp_ns,
+                    data=image_message(stamp_ns, IMAGE_FRAME_ID, IMAGE_WIDTH, IMAGE_HEIGHT, pixels),
+                )
+
         writer.finish()
 
-    print(
-        f"[OK] {path} — {path.stat().st_size} bytes, "
-        f"{tf_count} /tf msgs, {cloud_count} /points msgs x {point_count} points"
-    )
+    summary = f"{tf_count} /tf msgs, {cloud_count} /points msgs x {point_count} points"
+    if image_count:
+        summary += f", {image_count} /image msgs {IMAGE_WIDTH}x{IMAGE_HEIGHT} {IMAGE_ENCODING}"
+    print(f"[OK] {path} — {path.stat().st_size} bytes, {summary}")
 
 
 def default_output() -> Path:
@@ -354,6 +603,32 @@ def default_output() -> Path:
     return Path(__file__).resolve().parents[2] / "build" / "scene3d_fixture.mcap"
 
 
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument(
+        "output", nargs="?", type=Path, default=None, help="destination .mcap (default: build/scene3d_fixture.mcap)"
+    )
+    parser.add_argument(
+        "--no-image",
+        dest="image",
+        action="store_false",
+        help="omit the /image test card (the 2D harness needs it; the 3D one does not)",
+    )
+    parser.add_argument(
+        "--verify",
+        action="store_true",
+        help="re-read the /image messages with the independent CDR reader and assert they round-trip",
+    )
+    args = parser.parse_args()
+
+    out = (args.output.expanduser() if args.output is not None else default_output()).resolve()
+    generate(out, include_image=args.image)
+    if args.verify:
+        if not args.image:
+            parser.error("--verify has nothing to check with --no-image")
+        checked = verify_image_messages(out, image_test_card())
+        print(f"[OK] verified {checked} /image message(s): CDR round-trips with zero trailing bytes")
+
+
 if __name__ == "__main__":
-    out = Path(sys.argv[1]).expanduser() if len(sys.argv) > 1 else default_output()
-    generate(out.resolve())
+    main()
