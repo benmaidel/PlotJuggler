@@ -22,6 +22,17 @@ if(TARGET pj_scene3d_widgets)
     pj_scene3d_widgets Qt6::Widgets Qt6::GuiPrivate
   )
 
+  # Drives the QRhi scene view (the renderer replacing the GL path). With a path
+  # argument it renders one frame from a fixed pose and saves a PNG, so the port
+  # can be compared against tools/reference/ as passes land; with none it is an
+  # interactive orbit view.
+  add_executable(scene3d_rhi_view rhi_view.cpp)
+  target_compile_features(scene3d_rhi_view PRIVATE cxx_std_20)
+  target_compile_options(scene3d_rhi_view PRIVATE ${PJ_WARNING_FLAGS} ${PJ_SANITIZER_FLAGS})
+  target_link_libraries(scene3d_rhi_view PRIVATE
+    pj_scene3d_widgets pj_scene3d_core Qt6::Widgets Qt6::GuiPrivate
+  )
+
   add_executable(marker_gallery_demo marker_gallery_demo.cpp)
   target_compile_features(marker_gallery_demo PRIVATE cxx_std_20)
   target_link_libraries(marker_gallery_demo PRIVATE
