@@ -203,10 +203,13 @@ full mechanism.
   absolute `filepath`.
 
 `Scene3DRhiPreviewDock` (opt-in via the `PJ_SCENE3D_RHI` environment variable) hosts
-the QRhi renderer inside the running app, in place of the real 3D dock, drawing the
-TF overlay + grid. Swapping the renderer under the REAL dock is gated on splitting
-decode from upload in each layer type; see `docs/ARCHITECTURE.md` → "The layer
-decode/upload split".
+the QRhi renderer inside the running app, in place of the real 3D dock: TF overlay,
+grid, and one point-cloud topic. The cloud goes through `IPointCloudSink`
+(`pointcloud_sink.h`) — a real `PointCloudLayer` decodes and `RhiPointCloudSink`
+routes its output to the QRhi pass, so the decode machinery is shared rather than
+duplicated per backend. Splitting the remaining six layer types the same way is what
+gates swapping the renderer under the real dock; see `docs/ARCHITECTURE.md` →
+"The layer decode/upload split".
 
 The QRhi/Metal port has its own verification harness: `demos/rhi_view.cpp`
 (`scene3d_rhi_view`) renders one frame headlessly to a PNG and reports coverage and

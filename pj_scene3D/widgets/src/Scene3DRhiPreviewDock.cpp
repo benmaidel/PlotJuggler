@@ -14,9 +14,12 @@
 #include <vector>
 
 #include "pj_datastore/object_store.hpp"
+#include "pj_runtime/CatalogModel.h"
 #include "pj_runtime/SessionManager.h"
 #include "pj_scene3d_core/camera/camera.h"
 #include "pj_scene3d_core/tf/tf_buffer.h"
+#include "pj_scene3d_widgets/layers/pointcloud_layer.h"
+#include "pj_scene3d_widgets/rhi/rhi_pointcloud_sink.h"
 #include "pj_scene3d_widgets/rhi/rhi_scene_view_widget.h"
 #include "pj_scene3d_widgets/transform_service.h"
 
@@ -55,7 +58,15 @@ Scene3DRhiPreviewDock::Scene3DRhiPreviewDock(QWidget* parent) : QWidget(parent) 
   layout->addWidget(view_, 1);
 }
 
-Scene3DRhiPreviewDock::~Scene3DRhiPreviewDock() = default;
+Scene3DRhiPreviewDock::~Scene3DRhiPreviewDock() {
+  // Order matters: the layer holds a raw pointer to the sink.
+  if (cloud_layer_ != nullptr) {
+    cloud_layer_->setSink(nullptr);
+    cloud_layer_->detach();
+  }
+  cloud_layer_.reset();
+  cloud_sink_.reset();
+}
 
 void Scene3DRhiPreviewDock::setTransformService(TransformService* service) {
   transform_service_ = service;
@@ -95,6 +106,21 @@ void Scene3DRhiPreviewDock::tryAdoptExistingDataset() {
     return;
   }
   bindDataset(session_->objectStore().descriptor(topics.front()).dataset_id);
+
+  // Auto-adopt the first point-cloud topic. A drop is the normal route, but layout
+  // restore never drops anything, so without this the preview can only ever show a
+  // cloud interactively — and the headless harness could not verify it at all.
+  if (cloud_layer_ != nullptr) {
+    return;
+  }
+  for (const PJ::ObjectTopicId& topic : topics) {
+    const PJ::ObjectTopicDescriptor descriptor = session_->objectStore().descriptor(topic);
+    const PJ::sdk::BuiltinObjectType type = PJ::objectTypeFromMetadata(descriptor.metadata_json);
+    if (type == PJ::sdk::BuiltinObjectType::kPointCloud || type == PJ::sdk::BuiltinObjectType::kCompressedPointCloud) {
+      adoptPointCloudTopic(topic, type, QString::fromStdString(descriptor.topic_name));
+      return;
+    }
+  }
 }
 
 void Scene3DRhiPreviewDock::bindDataset(PJ::DatasetId dataset_id) {
@@ -118,13 +144,52 @@ void Scene3DRhiPreviewDock::bindDataset(PJ::DatasetId dataset_id) {
 }
 
 bool Scene3DRhiPreviewDock::tryAcceptObjectTopic(
-    PJ::ObjectTopicId topic_id, PJ::sdk::BuiltinObjectType /*object_type*/, const QString& /*title*/) {
-  // The topic itself is not rendered — this dock has no layers. It is accepted
-  // purely because the drop tells us which dataset's TF to show.
+    PJ::ObjectTopicId topic_id, PJ::sdk::BuiltinObjectType object_type, const QString& title) {
+  // Bind TF first: the layer's attach() needs the dataset's transform buffer.
   if (session_ != nullptr) {
     bindDataset(session_->objectStore().descriptor(topic_id).dataset_id);
   }
+  if (object_type == PJ::sdk::BuiltinObjectType::kPointCloud ||
+      object_type == PJ::sdk::BuiltinObjectType::kCompressedPointCloud) {
+    adoptPointCloudTopic(topic_id, object_type, title);
+  }
+  // Other types are accepted anyway, for the dataset id the drop revealed. Keeping
+  // the dock is better than having the host replace a working preview because it
+  // could not render one topic.
   return true;
+}
+
+void Scene3DRhiPreviewDock::adoptPointCloudTopic(
+    PJ::ObjectTopicId topic_id, PJ::sdk::BuiltinObjectType object_type, const QString& title) {
+  if (session_ == nullptr || tf_buffer_ == nullptr || view_ == nullptr) {
+    return;
+  }
+  // Detach the previous cloud before its sink dies: the layer holds a raw pointer to
+  // the sink, so tearing them down in the wrong order would leave it dangling.
+  if (cloud_layer_ != nullptr) {
+    cloud_layer_->setSink(nullptr);
+    cloud_layer_->detach();
+    cloud_layer_.reset();
+  }
+  cloud_sink_ = std::make_unique<rhi::RhiPointCloudSink>(view_->pointcloudPass());
+
+  cloud_layer_ = std::make_unique<PointCloudLayer>(topic_id, title, object_type);
+  // Routed BEFORE attach so the layer's bootstrap decode lands on the QRhi pass
+  // rather than on its own (inert) OpenGL one.
+  cloud_layer_->setSink(cloud_sink_.get());
+
+  Scene3DLayerContext ctx;
+  ctx.session = session_;
+  ctx.tf_buffer = tf_buffer_;
+  if (!cloud_layer_->attach(ctx)) {
+    qCWarning(lcRhiPreview) << "point cloud layer failed to attach for" << title;
+    cloud_layer_.reset();
+    cloud_sink_.reset();
+    return;
+  }
+  cloud_layer_->setFixedFrame(QString::fromStdString(fixed_frame_));
+  qCInfo(lcRhiPreview) << "showing point cloud topic" << title;
+  view_->update();
 }
 
 void Scene3DRhiPreviewDock::chooseFixedFrame() {
@@ -149,6 +214,10 @@ void Scene3DRhiPreviewDock::chooseFixedFrame() {
 void Scene3DRhiPreviewDock::onTrackerTime(double time) {
   tracker_ns_ = toNanoseconds(time);
   refreshTf();
+  if (cloud_layer_ != nullptr) {
+    // The layer defers its decode to the next paint, so this only marks it dirty.
+    cloud_layer_->setTrackerTime(PJ::fromRaw(tracker_ns_));
+  }
 }
 
 void Scene3DRhiPreviewDock::refreshTf() {
@@ -230,6 +299,9 @@ void Scene3DRhiPreviewDock::refreshTf() {
   }
 
   frameSceneOnce(triads);
+  if (cloud_layer_ != nullptr) {
+    cloud_layer_->setFixedFrame(QString::fromStdString(fixed_frame_));
+  }
   view_->axisPass().setFrames(std::move(triads));
   view_->tfConnectionsPass().setSegments(std::move(segments));
   view_->update();

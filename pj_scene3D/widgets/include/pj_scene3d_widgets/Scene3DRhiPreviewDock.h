@@ -21,7 +21,10 @@ namespace pj::scene3d {
 class TransformBuffer;
 class TransformService;
 
+class PointCloudLayer;
+
 namespace rhi {
+class RhiPointCloudSink;
 class RhiSceneViewWidget;
 }  // namespace rhi
 
@@ -39,10 +42,12 @@ class RhiSceneViewWidget;
 /// (see the module CLAUDE.md), and QRhiWidget has its own version of that in
 /// releaseResources(). Better to find out before building seven layers on top.
 ///
-/// Scope is deliberately tiny: the TF overlay (axis triads + parent-connection
-/// lines) and the reference grid, resolved from the live TransformService at the
-/// tracker time. It renders NO topic data — no clouds, meshes, markers or maps —
-/// and it accepts no drops.
+/// Scope: the TF overlay (axis triads + parent-connection lines), the reference
+/// grid, and ONE point-cloud topic. The cloud is the first use of the
+/// IPointCloudSink seam — a real PointCloudLayer does the decoding and its output is
+/// routed to the QRhi pass through RhiPointCloudSink, so none of that machinery is
+/// reimplemented here. Meshes, markers, maps and voxel grids still need their own
+/// layers split the same way.
 class Scene3DRhiPreviewDock : public QWidget, public PJ::IDataWidget {
   Q_OBJECT
 
@@ -72,9 +77,10 @@ class Scene3DRhiPreviewDock : public QWidget, public PJ::IDataWidget {
   /// The session, used only to resolve which dataset to take TF from.
   void setSessionManager(PJ::SessionManager* session);
 
-  /// Accepts any dropped 3D topic — not to render it, but because the drop is what
-  /// reveals which dataset to bind TF from. Returns true so the host keeps this dock
-  /// rather than replacing it.
+  /// Accepts a dropped 3D topic. A point cloud additionally gets a real
+  /// PointCloudLayer attached and routed to the QRhi pass; any other type is
+  /// accepted only for the dataset id it reveals, which is what binds TF. Returns
+  /// true either way so the host keeps this dock rather than replacing it.
   bool tryAcceptObjectTopic(
       PJ::ObjectTopicId topic_id, PJ::sdk::BuiltinObjectType object_type, const QString& title) override;
 
@@ -100,7 +106,15 @@ class Scene3DRhiPreviewDock : public QWidget, public PJ::IDataWidget {
   /// policy — this dock has no frame picker.
   void chooseFixedFrame();
 
+  /// Attach a PointCloudLayer for `topic_id` and route it to the QRhi pass. Replaces
+  /// any previously attached cloud: the preview shows one at a time.
+  void adoptPointCloudTopic(PJ::ObjectTopicId topic_id, PJ::sdk::BuiltinObjectType object_type, const QString& title);
+
   rhi::RhiSceneViewWidget* view_ = nullptr;
+  /// The one point-cloud topic on show, if any, plus the adapter binding it to the
+  /// QRhi pass. The sink must outlive the layer, which holds a raw pointer to it.
+  std::unique_ptr<rhi::RhiPointCloudSink> cloud_sink_;
+  std::unique_ptr<PointCloudLayer> cloud_layer_;
   TransformService* transform_service_ = nullptr;
   /// Held so a re-bind can drop the previous connection; see setTransformService.
   QMetaObject::Connection tf_ready_conn_;

@@ -80,9 +80,8 @@ exactly the class of bug QRhi does not report:
 
 ### The layer decode/upload split
 
-**Seam defined for point clouds. No QRhi consumer of it yet. Remaining layer types:
-meshes/URDF, scene entities, occupancy grid, voxel grid, poses-in-frame, depth
-cloud.**
+**Done: point clouds. Remaining: meshes/URDF, scene entities, occupancy grid, voxel
+grid, poses-in-frame, depth cloud.**
 
 The split point is not arbitrary — `PointCloudLayer`'s own header already named it:
 `pushCloud()` is *"the single point where a cloud reaches the GPU"*. Everything above
@@ -99,11 +98,22 @@ backend-agnostic; only the final upload is not. So the seam goes exactly there:
   data go through `sink()`, while the render-context lifecycle
   (`initializeGL`/`render`/`releaseGL`) stays on the concrete pass, since that part
   genuinely is backend-shaped.
+- **`RhiPointCloudSink` adapts the same output onto `RhiPointcloudPass`**, so the
+  QRhi renderer gets all of the decode machinery for free.
 
 `PointCloudLayer::setSink()` redirects the output; passing nullptr restores the owned
 OpenGL pass. Note the layer still *owns* a GL pass even when redirected — inert,
 because the QRhi view never calls its GL hooks. Inverting that ownership is a later
 step; it is called out here so nobody mistakes it for the intended end state.
+
+**The QRhi pass is not at feature parity, and the adapter is where that shows.**
+Supported: geometry (both interleaved and verbatim-wire), colormap, range, radius,
+visibility. Silently ignored for want of a counterpart: per-point RGB and solid
+colour, point shape, pixel sizing, LUT inversion, and the spatial-axis auto-range —
+so an RGB cloud currently renders through the colormap. Acceptable for a developer
+preview; first thing to fix when bringing the pass up to parity. The GPU AABB
+reduction reports unavailable, which is the documented way for a backend to say "keep
+your CPU bounds scan".
 
 ### Scene3DRhiPreviewDock — what it is for
 
