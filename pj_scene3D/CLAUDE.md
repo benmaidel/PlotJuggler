@@ -112,9 +112,11 @@ full mechanism.
   direct child of `Scene3DDockWidget`), render passes, layers, and
   `Scene3DDockWidget` (an `IDataWidget`). Key public headers:
   `widgets/include/pj_scene3d_widgets/{Scene3DDockWidget.h,
-  transform_service.h, scene3d_layer.h, mesh_data.h, mesh_shading_params.h,
-  passes/mesh_render_pass.h, layers/robot_model_layer.h,
-  layers/scene_entities_layer.h}`. A right-click on the view delivers a
+  transform_service.h, scene3d_layer.h, mesh_data.h, mesh_primitives.h,
+  mesh_shading_params.h, passes/mesh_render_pass.h, layers/robot_model_layer.h,
+  layers/scene_entities_layer.h}`. The procedural box/cylinder/sphere used by URDF
+  primitives live in `mesh_primitives.h` (pure CPU geometry) so the OpenGL and QRhi
+  mesh passes draw the identical shapes. A right-click on the view delivers a
   native `QContextMenuEvent` that the host `DockWidget`'s event filter catches,
   so the 3D scene gets the same standard menu (Split Horizontally/Vertically,
   Clear) as other widgets with no view-side context-menu code. *Landing

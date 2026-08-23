@@ -24,9 +24,12 @@
 #include <cmath>
 #include <cstdio>
 #include <glm/gtc/matrix_transform.hpp>
+#include <memory>
+#include <string>
 #include <vector>
 
 #include "pj_scene3d_core/poses_in_frame_render.h"
+#include "pj_scene3d_widgets/mesh_primitives.h"
 #include "pj_scene3d_widgets/rhi/rhi_scene_view_widget.h"
 
 // Q_INIT_RESOURCE must sit at global scope: inside an anonymous namespace its
@@ -173,6 +176,76 @@ int main(int argc, char** argv) {
     const std::vector<unsigned char> patch(static_cast<size_t>(patch_rect.width()) * patch_rect.height(), 0);
     occ.updateRegion(patch_rect, patch.data());
   }
+  // Meshes: a row of spheres sweeping metallic 0 -> 1 at low roughness (the metals
+  // must reflect the procedural sky/ground gradient rather than read black, which is
+  // what the split-sum specular IBL buys), one rough dielectric box, and a
+  // translucent box that has to land in the blended bucket.
+  {
+    auto& mesh = view.meshPass();
+    std::vector<pj::scene3d::rhi::RhiMeshPass::DrawCall> visuals;
+
+    constexpr int kSpheres = 5;
+    for (int i = 0; i < kSpheres; ++i) {
+      const float t = static_cast<float>(i) / static_cast<float>(kSpheres - 1);
+      pj::scene3d::MeshData sphere = pj::scene3d::makeSphere();
+      // The primitive builders bake a 0.7 grey COLOR_0, which would multiply the
+      // material factor and mute it. Real glTF meshes carry white (or no) vertex
+      // colour, so whiten it here to see the material alone.
+      for (pj::scene3d::Vertex& vertex : sphere.vertices) {
+        vertex.color = glm::vec4(1.0F);
+      }
+      auto material = std::make_shared<pj::scene3d::Material>();
+      material->base_color_factor = glm::vec4(0.95F, 0.78F, 0.35F, 1.0F);  // gold-ish
+      material->metallic_factor = t;
+      material->roughness_factor = 0.18F + (0.10F * t);
+      material->has_pbr = true;
+      sphere.submeshes.front().material = material;
+
+      const std::string key = "sphere_" + std::to_string(i);
+      mesh.setMeshData(key, std::move(sphere));
+
+      pj::scene3d::rhi::RhiMeshPass::DrawCall call;
+      call.kind = pj::scene3d::rhi::RhiMeshPass::GeometryKind::kMesh;
+      call.mesh_key = key;
+      glm::mat4 model(1.0F);
+      model = glm::translate(model, glm::vec3(-4.0F + (static_cast<float>(i) * 2.0F), 4.4F, 0.75F));
+      model = glm::scale(model, glm::vec3(0.7F));
+      call.model = model;
+      call.use_vertex_color = true;  // material-driven base colour
+      visuals.push_back(call);
+    }
+
+    // A rough red dielectric, drawn through the per-draw OVERRIDE tint path
+    // (use_vertex_color = false) the way a URDF link colour arrives.
+    {
+      pj::scene3d::rhi::RhiMeshPass::DrawCall call;
+      call.kind = pj::scene3d::rhi::RhiMeshPass::GeometryKind::kBox;
+      glm::mat4 model(1.0F);
+      model = glm::translate(model, glm::vec3(-4.6F, 1.4F, 0.6F));
+      model = glm::rotate(model, glm::radians(20.0F), glm::vec3(0.0F, 0.0F, 1.0F));
+      model = glm::scale(model, glm::vec3(1.2F));
+      call.model = model;
+      call.color = glm::vec4(0.85F, 0.25F, 0.20F, 1.0F);
+      call.use_vertex_color = false;
+      visuals.push_back(call);
+    }
+    // Same shape at alpha < 1: must be bucketed translucent and let the grid show
+    // through rather than punching a hole in it.
+    {
+      pj::scene3d::rhi::RhiMeshPass::DrawCall call;
+      call.kind = pj::scene3d::rhi::RhiMeshPass::GeometryKind::kCylinder;
+      glm::mat4 model(1.0F);
+      model = glm::translate(model, glm::vec3(-2.4F, 1.4F, 0.7F));
+      model = glm::scale(model, glm::vec3(0.7F, 0.7F, 1.4F));
+      call.model = model;
+      call.color = glm::vec4(0.30F, 0.55F, 0.95F, 0.45F);
+      call.use_vertex_color = false;
+      visuals.push_back(call);
+    }
+
+    mesh.setVisualDraws(std::move(visuals));
+  }
+
   // Pose array, shaped like an AMCL particle cloud: a fan of single-X-arrow
   // gizmos in one user colour at partial opacity, so the pass's override_color and
   // blended-opacity paths both run. The instances stay FRAME-LOCAL and the frame's

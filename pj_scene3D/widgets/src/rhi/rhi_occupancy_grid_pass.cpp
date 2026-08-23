@@ -59,8 +59,9 @@ void RhiOccupancyGridPass::updateRegion(const QRect& region, const std::uint8_t*
   // Fold the patch into the CPU copy so a later device loss can rebuild the whole
   // texture without the caller replaying every update.
   for (int row = 0; row < region.height(); ++row) {
-    std::uint8_t* dst = cells_.data() + (static_cast<std::size_t>(region.y() + row) * width_) + region.x();
-    const std::uint8_t* src = patch + (static_cast<std::size_t>(row) * region.width());
+    std::uint8_t* dst = cells_.data() + (static_cast<std::size_t>(region.y() + row) * static_cast<std::size_t>(width_)) +
+                        static_cast<std::size_t>(region.x());
+    const std::uint8_t* src = patch + (static_cast<std::size_t>(row) * static_cast<std::size_t>(region.width()));
     std::memcpy(dst, src, static_cast<std::size_t>(region.width()));
   }
 
@@ -200,7 +201,7 @@ void RhiOccupancyGridPass::prepare(QRhiResourceUpdateBatch& updates, const RhiFr
   }
 
   if (full_upload_pending_) {
-    QRhiTextureSubresourceUploadDescription sub(cells_.data(), static_cast<int>(cells_.size()));
+    QRhiTextureSubresourceUploadDescription sub(cells_.data(), static_cast<quint32>(cells_.size()));
     sub.setSourceSize(QSize(width_, height_));
     // R8 rows are 1 byte per cell, so the data is already tightly packed; QRhi has
     // no glPixelStorei equivalent and expects exactly that.
@@ -214,11 +215,13 @@ void RhiOccupancyGridPass::prepare(QRhiResourceUpdateBatch& updates, const RhiFr
       // upload description cannot express.
       std::vector<std::uint8_t> patch(static_cast<std::size_t>(r.width()) * static_cast<std::size_t>(r.height()));
       for (int row = 0; row < r.height(); ++row) {
-        const std::uint8_t* src = cells_.data() + (static_cast<std::size_t>(r.y() + row) * width_) + r.x();
-        std::memcpy(patch.data() + (static_cast<std::size_t>(row) * r.width()), src,
+        const std::uint8_t* src = cells_.data() +
+                                  (static_cast<std::size_t>(r.y() + row) * static_cast<std::size_t>(width_)) +
+                                  static_cast<std::size_t>(r.x());
+        std::memcpy(patch.data() + (static_cast<std::size_t>(row) * static_cast<std::size_t>(r.width())), src,
                     static_cast<std::size_t>(r.width()));
       }
-      QRhiTextureSubresourceUploadDescription sub(patch.data(), static_cast<int>(patch.size()));
+      QRhiTextureSubresourceUploadDescription sub(patch.data(), static_cast<quint32>(patch.size()));
       sub.setSourceSize(r.size());
       sub.setDestinationTopLeft(r.topLeft());
       updates.uploadTexture(grid_tex_, QRhiTextureUploadDescription({0, 0, sub}));

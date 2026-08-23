@@ -28,9 +28,16 @@ Ported so far:
 | Point clouds | `RhiPointcloudPass` | instanced billboards, colormap LUT texture |
 | Occupancy grid | `RhiOccupancyGridPass` | R8 texture, partial `updateRegion` uploads |
 | Voxel grid | `RhiVoxelGridPass` | 3D R32F texture, `texelFetch` in the *vertex* stage |
+| Meshes / PBR | `RhiMeshPass` | glTF metallic-roughness, 5 maps, analytic IBL |
 
 Drive it with `demos/rhi_view.cpp` (`scene3d_rhi_view`), which renders one frame
 headlessly to a PNG for comparison against `tools/reference/`.
+
+**Verification gap:** the ported passes have no `ctest` coverage — the demo is the
+harness, and it is checked by eye plus its own non-background/tone-count assertions.
+An offscreen-`QRhi` test fixture would cover all of them at once and is the highest
+-value next step on the testing side; a per-pass test before that fixture exists
+would mostly be rebuilding it.
 
 Two shader pairs are deliberately **shared** by more than one pass, because the
 alternative is two copies of a std140 block or a vertex stride drifting apart —
@@ -60,8 +67,8 @@ exactly the class of bug QRhi does not report:
    the end. The ported passes deliberately omit that step so the passthrough
    present looks right, so the operators and the per-pass linearization have to
    switch over together.
-2. Remaining geometry passes: meshes/PBR (the largest), markers (five programs,
-   incl. replacing `glPolygonMode` wireframe with real line geometry).
+2. Remaining geometry pass: markers (five programs, incl. replacing `glPolygonMode`
+   wireframe with real line geometry).
 3. Screen-space passes: SSAO and EDL. Both need the resolved single-sample depth
    the HDR chain already produces — `QRhi::ResolveDepthStencil` is supported on
    Metal, so the design carries over unchanged.
@@ -81,6 +88,35 @@ exactly the class of bug QRhi does not report:
 - `RhiPosesPass` blends with depth-write on and no depth sort, matching the GL
   pass: translucent arms occlude each other in draw order. Acceptable for gizmos,
   and it avoids a per-frame sort over a particle cloud.
+- `RhiMeshPass` omits shadow receive and the R8 "is-mesh" mask for EDL, because the
+  passes that produce those inputs are themselves unported. It also has no
+  wide-gamut highlight rolloff yet — a specular highlight clips instead of being
+  tonemapped, which is a direct consequence of item 1 above.
+
+### RhiMeshPass — two structural departures from the GL pass
+
+Both are forced by QRhi rather than chosen, and both are worth knowing before
+touching the other passes:
+
+- **Every material binds all five samplers.** A pipeline is compiled against its
+  binding layout, so that layout must be final at pipeline-creation time and cannot
+  vary per material. Absent maps therefore bind a 1×1 *neutral* texel rather than
+  being switched off by a uniform — which also deletes four of GL's five
+  `u_has_*_tex` flags, since white is the identity for all four multiplicative
+  slots. The normal map is the one exception and keeps a flag: its neutral value is
+  a no-op **only** when the tangent basis is well-formed, and a mesh with no UVs
+  does not have one, so a flat placeholder plus a set flag would yield NaN normals.
+  The flag follows what was *actually bound*, not what the material requested, so a
+  map that fails to decode correctly degrades instead of corrupting shading.
+- **Per-draw uniforms ride a dynamic-offset UBO.** GL re-set `u_model` per draw;
+  QRhi has no loose uniforms, so one buffer holds every draw's block at an
+  `ubufAlignment()`-aligned stride and each draw binds its own slot by offset. The
+  consequence to remember: *growing that buffer invalidates every binding set that
+  referenced it*, so capacity is settled from an upper bound **before** resolving
+  the frame's draws, not after counting them.
+
+Note also that `slots` is a Qt keyword macro (`qobjectdefs.h`) — naming a local
+variable that produces a baffling "expected unqualified-id".
 
 **Two QRhi rules this port learned the hard way**, both silently accepted by Metal
 and both producing convincing-but-wrong output rather than an error:

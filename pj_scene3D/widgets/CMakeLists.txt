@@ -19,6 +19,7 @@ set(PJ_SCENE3D_WIDGETS_SOURCES
   src/rhi/rhi_grid_pass.cpp
   src/rhi/rhi_hdr_target.cpp
   src/rhi/rhi_pointcloud_pass.cpp
+  src/rhi/rhi_mesh_pass.cpp
   src/rhi/rhi_occupancy_grid_pass.cpp
   src/rhi/rhi_poses_pass.cpp
   src/rhi/rhi_present_pass.cpp
@@ -63,6 +64,7 @@ set(PJ_SCENE3D_WIDGETS_SOURCES
   src/urdf_parser.cpp
   src/urdf_package_resolver.cpp
   src/mesh_loader.cpp
+  src/mesh_primitives.cpp
   src/object_topic_metadata.cpp
   src/resolve_object.cpp
   src/url_fetcher.cpp
@@ -76,6 +78,7 @@ set(PJ_SCENE3D_WIDGETS_SOURCES
   include/pj_scene3d_widgets/rhi/rhi_grid_pass.h
   include/pj_scene3d_widgets/rhi/rhi_hdr_target.h
   include/pj_scene3d_widgets/rhi/rhi_pointcloud_pass.h
+  include/pj_scene3d_widgets/rhi/rhi_mesh_pass.h
   include/pj_scene3d_widgets/rhi/rhi_occupancy_grid_pass.h
   include/pj_scene3d_widgets/rhi/rhi_arrow_shading.h
   include/pj_scene3d_widgets/rhi/rhi_poses_pass.h
@@ -87,6 +90,7 @@ set(PJ_SCENE3D_WIDGETS_SOURCES
   include/pj_scene3d_widgets/scene_view_widget.h
   include/pj_scene3d_widgets/scene3d_layer.h
   include/pj_scene3d_widgets/mesh_data.h
+  include/pj_scene3d_widgets/mesh_primitives.h
   include/pj_scene3d_widgets/layers/depth_cloud_layer.h
   include/pj_scene3d_widgets/layers/pointcloud_layer.h
   include/pj_scene3d_widgets/layers/occupancy_grid_layer.h
@@ -151,6 +155,8 @@ qt6_add_shaders(pj_scene3d_widgets "scene3d_shaders"
     shaders/rhi_probe.frag
     shaders/arrow.vert
     shaders/arrow.frag
+    shaders/mesh.vert
+    shaders/mesh.frag
     shaders/voxel.vert
     shaders/voxel.frag
     shaders/occupancy.vert

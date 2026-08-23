@@ -58,7 +58,7 @@ bool RhiPointcloudPass::ensureColormapTexture(QRhi& /*rhi*/, QRhiResourceUpdateB
     return colormap_tex_ != nullptr;
   }
   const std::vector<std::uint8_t> lut = PJ::buildColormapLut(PJ::kColormapLutWidth);
-  QRhiTextureSubresourceUploadDescription sub(lut.data(), static_cast<int>(lut.size()));
+  QRhiTextureSubresourceUploadDescription sub(lut.data(), static_cast<quint32>(lut.size()));
   sub.setSourceSize(QSize(PJ::kColormapLutWidth, PJ::kColormapCount));
   updates.uploadTexture(colormap_tex_, QRhiTextureUploadDescription({0, 0, sub}));
   colormap_uploaded_ = true;

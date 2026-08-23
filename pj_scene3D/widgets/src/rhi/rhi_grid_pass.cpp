@@ -115,7 +115,7 @@ void RhiGridPass::prepare(QRhiResourceUpdateBatch& updates, const RhiFrameContex
     // Immutable: the tessellation only changes when the user edits extent or
     // divisions, which re-creates the buffer rather than streaming it per frame.
     delete vbo_;
-    vbo_ = rhi_->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, bytes);
+    vbo_ = rhi_->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, static_cast<quint32>(bytes));
     if (vbo_ == nullptr || !vbo_->create()) {
       vertex_count_ = 0;
       return;

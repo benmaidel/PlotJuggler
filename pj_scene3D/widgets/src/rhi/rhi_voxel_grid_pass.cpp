@@ -211,7 +211,7 @@ void RhiVoxelGridPass::prepare(QRhiResourceUpdateBatch& updates, const RhiFrameC
 
   if (!colormap_uploaded_ && colormap_tex_ != nullptr) {
     const std::vector<std::uint8_t> lut = PJ::buildColormapLut(PJ::kColormapLutWidth);
-    QRhiTextureSubresourceUploadDescription sub(lut.data(), static_cast<int>(lut.size()));
+    QRhiTextureSubresourceUploadDescription sub(lut.data(), static_cast<quint32>(lut.size()));
     sub.setSourceSize(QSize(PJ::kColormapLutWidth, PJ::kColormapCount));
     updates.uploadTexture(colormap_tex_, QRhiTextureUploadDescription({0, 0, sub}));
     colormap_uploaded_ = true;
@@ -230,7 +230,7 @@ void RhiVoxelGridPass::prepare(QRhiResourceUpdateBatch& updates, const RhiFrameC
     const int slice_bytes = static_cast<int>(slice_floats * sizeof(float));
     for (int z = 0; z < slices_; ++z) {
       QRhiTextureSubresourceUploadDescription sub(values_.data() + (static_cast<std::size_t>(z) * slice_floats),
-                                                  slice_bytes);
+                                                  static_cast<quint32>(slice_bytes));
       sub.setSourceSize(QSize(columns_, rows_));
       entries.emplace_back(z, 0, sub);
     }

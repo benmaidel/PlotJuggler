@@ -78,12 +78,13 @@ void RhiSceneViewWidget::setSceneSamples(int samples) {
 std::vector<IRhiRenderPass*> RhiSceneViewWidget::passes() {
   // Order matters, and it is layered by depth behaviour. The reference grid and
   // the TF connection lines depth-test but do not depth-write, and the occupancy
-  // map is a translucent ground overlay, so all three go down first. The opaque
-  // voxel cubes and point cloud then depth-write over them. The gizmos come last:
-  // pose triads blend (they honour an opacity knob), so they must see the final
-  // depth buffer to be occluded correctly.
-  return {&grid_pass_,       &occupancy_pass_, &tf_connections_pass_, &voxel_pass_,
-          &pointcloud_pass_, &axis_pass_,      &poses_pass_};
+  // map is a translucent ground overlay, so all three go down first. The meshes,
+  // voxel cubes and point cloud then depth-write over them (the mesh pass runs its
+  // own opaque-then-translucent split internally). The gizmos come last: pose
+  // triads blend (they honour an opacity knob), so they must see the final depth
+  // buffer to be occluded correctly.
+  return {&grid_pass_,  &occupancy_pass_,  &tf_connections_pass_, &mesh_pass_,
+          &voxel_pass_, &pointcloud_pass_, &axis_pass_,           &poses_pass_};
 }
 
 glm::mat4 RhiSceneViewWidget::buildViewProj(const QSize& pixel_size) const {
@@ -138,6 +139,9 @@ void RhiSceneViewWidget::render(QRhiCommandBuffer* cb) {
   RhiFrameContext ctx;
   ctx.pixel_size = widget_rt->pixelSize();
   ctx.view_proj = buildViewProj(ctx.pixel_size);
+  if (camera_ != nullptr) {
+    ctx.camera_pos_world = camera_->position();
+  }
 
   const bool hdr_ready = hdr_target_.ensure(*r, ctx.pixel_size, desired_samples_);
   // The geometry pipelines are only valid for the descriptor they were built

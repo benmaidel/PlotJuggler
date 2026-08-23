@@ -2,9 +2,10 @@
 // Copyright 2026 Davide Faconti
 // SPDX-License-Identifier: MPL-2.0
 
+#include <rhi/qrhi.h>
+
 #include <QSize>
 #include <glm/glm.hpp>
-#include <rhi/qrhi.h>
 
 namespace pj::scene3d::rhi {
 
@@ -18,6 +19,10 @@ struct RhiFrameContext {
   /// Render target size in device pixels; needed by passes that size things in
   /// screen space (point sprites, screen-space line widths, post effects).
   QSize pixel_size;
+  /// World-space eye position. Not derivable from `view_proj` without inverting it,
+  /// and view-dependent shading (the mesh pass's Fresnel, specular and environment
+  /// reflection) needs it per fragment.
+  glm::vec3 camera_pos_world{0.0F};
 };
 
 /// One drawable stage of the QRhi scene renderer.
