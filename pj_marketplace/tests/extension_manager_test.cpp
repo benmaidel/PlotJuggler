@@ -1242,34 +1242,38 @@ TEST(PlatformDetectionTest, CurrentPlatformHasExpectedFormat) {
   EXPECT_TRUE(platform.contains('-')) << "Expected '<os>-<arch>' format, got: " << platform.toStdString();
 }
 
-// On the primary Linux x86_64 build/CI host, the reported platform must match the
-// key used in the registry fixture so that install() can resolve the download artifact.
-TEST(PlatformDetectionTest, LinuxX86PlatformMatchesRegistryKey) {
-  if (!PlatformUtils::currentPlatform().startsWith("linux")) {
-    GTEST_SKIP() << "test pins the Linux x86_64 platform key";
-  }
-  EXPECT_EQ(PlatformUtils::currentPlatform(), "linux-x86_64");
+// Every platform key the registry may legitimately serve, in the "<os>-<arch>"
+// form PlatformUtils::currentPlatform() builds from QSysInfo. Kept in one place
+// so the two tests below cannot drift apart.
+QStringList registryLegalPlatformKeys() {
+  return {"linux-x86_64",  "linux-arm64",  "macos-x86_64",
+          "macos-arm64",   "windows-x86_64", "windows-arm64"};
+}
+
+// The reported platform must be a key the registry could actually carry, so
+// install() can resolve a download artifact on this host. Deliberately NOT
+// pinned to one os/arch: the build hosts span x86_64 and arm64 on all three
+// operating systems, and asserting a single key just breaks on whichever
+// machine is not the CI default.
+TEST(PlatformDetectionTest, CurrentPlatformIsARegistryLegalKey) {
+  const QString platform = PlatformUtils::currentPlatform();
+  EXPECT_TRUE(registryLegalPlatformKeys().contains(platform))
+      << "Platform '" << platform.toStdString()
+      << "' is not a registry-legal key; add it here and to the registry artifact matrix.";
 }
 
 // Verify that PlatformUtils::currentPlatform() returns a key that would exist
 // in a typical registry entry, so install() can resolve the download artifact.
 TEST(PlatformDetectionTest, CurrentPlatformResolvesRegistryArtifact) {
-  // Test fixture with fake URLs - we only check that the platform key exists
+  // Test fixture with fake URLs - we only check that the platform key exists.
+  // Every registry-legal key is listed so this passes on any supported host.
   Extension ext;
   ext.id = "test-extension";
   ext.version = "1.0.0";
-  ext.platforms["linux-x86_64"] = {
-      "https://example.com/test/extension-linux-x86_64.zip",
-      "sha256:0000000000000000000000000000000000000000000000000000000000000000"};
-  ext.platforms["windows-x86_64"] = {
-      "https://example.com/test/extension-windows-x64.zip",
-      "sha256:0000000000000000000000000000000000000000000000000000000000000000"};
-  ext.platforms["macos-arm64"] = {
-      "https://example.com/test/extension-macos-arm64.zip",
-      "sha256:0000000000000000000000000000000000000000000000000000000000000000"};
-  ext.platforms["macos-x86_64"] = {
-      "https://example.com/test/extension-macos-x86_64.zip",
-      "sha256:0000000000000000000000000000000000000000000000000000000000000000"};
+  for (const QString& key : registryLegalPlatformKeys()) {
+    ext.platforms[key] = {QString("https://example.com/test/extension-%1.zip").arg(key),
+                          "sha256:0000000000000000000000000000000000000000000000000000000000000000"};
+  }
 
   EXPECT_TRUE(ext.platforms.contains(PlatformUtils::currentPlatform()))
       << "Platform '" << PlatformUtils::currentPlatform().toStdString()
