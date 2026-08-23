@@ -76,14 +76,14 @@ void RhiSceneViewWidget::setSceneSamples(int samples) {
 }
 
 std::vector<IRhiRenderPass*> RhiSceneViewWidget::passes() {
-  // Grid first: it does not write depth, so drawing it before the opaque triads
-  // lets them occlude it correctly rather than the reverse.
-  // Grid and connection lines first (neither writes depth), then the opaque
-  // cloud and triads so they occlude the annotations correctly.
-  // Order matters. The occupancy map is a translucent ground overlay, so it is
-  // blended over the reference grid before any opaque geometry; the cloud and
-  // triads then depth-write over both.
-  return {&grid_pass_, &occupancy_pass_, &tf_connections_pass_, &voxel_pass_, &pointcloud_pass_, &axis_pass_};
+  // Order matters, and it is layered by depth behaviour. The reference grid and
+  // the TF connection lines depth-test but do not depth-write, and the occupancy
+  // map is a translucent ground overlay, so all three go down first. The opaque
+  // voxel cubes and point cloud then depth-write over them. The gizmos come last:
+  // pose triads blend (they honour an opacity knob), so they must see the final
+  // depth buffer to be occluded correctly.
+  return {&grid_pass_,       &occupancy_pass_, &tf_connections_pass_, &voxel_pass_,
+          &pointcloud_pass_, &axis_pass_,      &poses_pass_};
 }
 
 glm::mat4 RhiSceneViewWidget::buildViewProj(const QSize& pixel_size) const {
@@ -168,8 +168,8 @@ void RhiSceneViewWidget::render(QRhiCommandBuffer* cb) {
     // Scene into the off-screen multisample chain. Resolve to single-sample
     // happens implicitly at endPass, driven by the attachment's resolveTexture.
     cb->beginPass(hdr_target_.renderTarget(), clear, {1.0F, 0}, updates);
-    cb->setViewport({0.0F, 0.0F, static_cast<float>(ctx.pixel_size.width()),
-                     static_cast<float>(ctx.pixel_size.height())});
+    cb->setViewport(
+        {0.0F, 0.0F, static_cast<float>(ctx.pixel_size.width()), static_cast<float>(ctx.pixel_size.height())});
     for (IRhiRenderPass* pass : passes()) {
       pass->draw(*cb, ctx);
     }
@@ -178,16 +178,16 @@ void RhiSceneViewWidget::render(QRhiCommandBuffer* cb) {
     // Composite onto the widget's own target. The clear colour is irrelevant here
     // because the fullscreen triangle covers every pixel.
     cb->beginPass(widget_rt, clear, {1.0F, 0});
-    cb->setViewport({0.0F, 0.0F, static_cast<float>(ctx.pixel_size.width()),
-                     static_cast<float>(ctx.pixel_size.height())});
+    cb->setViewport(
+        {0.0F, 0.0F, static_cast<float>(ctx.pixel_size.width()), static_cast<float>(ctx.pixel_size.height())});
     present_pass_.draw(*cb, ctx);
     cb->endPass();
   } else {
     // Fallback: straight into the widget target. Loses MSAA and the HDR buffer but
     // still shows the scene, which beats a blank dock.
     cb->beginPass(widget_rt, clear, {1.0F, 0}, updates);
-    cb->setViewport({0.0F, 0.0F, static_cast<float>(ctx.pixel_size.width()),
-                     static_cast<float>(ctx.pixel_size.height())});
+    cb->setViewport(
+        {0.0F, 0.0F, static_cast<float>(ctx.pixel_size.width()), static_cast<float>(ctx.pixel_size.height())});
     for (IRhiRenderPass* pass : passes()) {
       pass->draw(*cb, ctx);
     }

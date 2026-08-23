@@ -5,6 +5,7 @@
 #include <glm/glm.hpp>
 #include <vector>
 
+#include "pj_scene3d_widgets/rhi/rhi_arrow_shading.h"
 #include "pj_scene3d_widgets/rhi/rhi_render_pass.h"
 
 namespace pj::scene3d::rhi {
@@ -16,6 +17,11 @@ namespace pj::scene3d::rhi {
 /// per-instance transforms — the shape most of the remaining passes need
 /// (poses, markers, voxel grids all draw one mesh many times). One indexed arrow
 /// mesh is uploaded once and drawn `3 * frames` times from a per-instance buffer.
+///
+/// Shares shaders/arrow.{vert,frag} with RhiPosesPass so TF gizmos and PoseArray
+/// gizmos cannot drift apart visually. The frames handed to setFrames() are
+/// already world-space, so this pass writes identity into the shader's
+/// `frame_world`.
 class RhiAxisPass final : public IRhiRenderPass {
  public:
   RhiAxisPass() = default;
@@ -34,18 +40,7 @@ class RhiAxisPass final : public IRhiRenderPass {
   void setAxisLength(float metres);
 
  private:
-  /// One instance: a model matrix plus a colour. Laid out to match the vertex
-  /// attribute declarations in shaders/axis.vert — four vec4 columns then rgba,
-  /// 80 bytes, which is also the per-instance stride.
-  struct Instance {
-    float model[16];
-    float color[4];
-  };
-  static_assert(sizeof(Instance) == 80, "Instance must match the per-instance vertex stride");
-
-  struct AxisUbo {
-    float view_proj[16];
-  };
+  using Instance = arrow::Instance;
 
   void rebuildInstances();
 

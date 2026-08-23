@@ -15,12 +15,36 @@ second renderer is therefore being built on Qt's **QRhi** (Metal on macOS, OpenG
 elsewhere) under `widgets/{include/pj_scene3d_widgets,src}/rhi/`, landing pass by
 pass so Linux keeps the proven path until parity is reached.
 
-Ported so far: the `RhiSceneViewWidget` host (camera, depth, clip-space
-correction), the off-screen MSAA/HDR chain + present pass (`RhiHdrTarget`,
-`RhiPresentPass`), the ground grid (`RhiGridPass`), TF triads (`RhiAxisPass`,
-instanced), and point clouds (`RhiPointcloudPass`). Drive it with
-`demos/rhi_view.cpp` (`scene3d_rhi_view`), which renders one frame headlessly to a
-PNG for comparison against `tools/reference/`.
+Ported so far:
+
+| Area | Class | Notes |
+|---|---|---|
+| Host | `RhiSceneViewWidget` | camera, depth, clip-space correction, pass ordering |
+| Off-screen chain | `RhiHdrTarget`, `RhiPresentPass` | MSAA RGBA16F + resolved depth |
+| Ground grid | `RhiGridPass` | shares `shaders/lines.*` |
+| TF connection lines | `RhiTfConnectionsPass` | shares `shaders/lines.*` |
+| TF triads | `RhiAxisPass` | instanced; shares `shaders/arrow.*` |
+| Pose arrays | `RhiPosesPass` | instanced; shares `shaders/arrow.*` |
+| Point clouds | `RhiPointcloudPass` | instanced billboards, colormap LUT texture |
+| Occupancy grid | `RhiOccupancyGridPass` | R8 texture, partial `updateRegion` uploads |
+| Voxel grid | `RhiVoxelGridPass` | 3D R32F texture, `texelFetch` in the *vertex* stage |
+
+Drive it with `demos/rhi_view.cpp` (`scene3d_rhi_view`), which renders one frame
+headlessly to a PNG for comparison against `tools/reference/`.
+
+Two shader pairs are deliberately **shared** by more than one pass, because the
+alternative is two copies of a std140 block or a vertex stride drifting apart —
+exactly the class of bug QRhi does not report:
+
+- `shaders/lines.*` — the grid and the TF connection lines.
+- `shaders/arrow.*` — the TF triads and the pose-array gizmos. The GL renderer
+  states as an intent that pose gizmos read identically to the TF "Frames" gizmos;
+  one shader pair enforces that instead of trusting two copies. Their common GPU
+  contract (the UBO and per-instance layouts) lives in `rhi/rhi_arrow_shading.h`.
+  The UBO carries a `frame_world` matrix so a pass can keep its instances
+  *frame-local* and place them with one uniform write — what makes a streaming
+  pose array cheap to animate. `RhiAxisPass`, whose instances are already
+  world-space, writes identity there.
 
 **Still to do**, roughly in order of value:
 
@@ -30,9 +54,14 @@ PNG for comparison against `tools/reference/`.
    SSAO/EDL multiply. Until these land, QRhi colours are *correct* but will not
    match the GL renderer's look. Note the ordering is load-bearing: ACES
    desaturates, which is why saturation (1.3) follows it rather than preceding it.
-2. Remaining geometry passes: TF connection lines, occupancy grid, voxel grid,
-   meshes/PBR (the largest), markers (five programs, incl. replacing
-   `glPolygonMode` wireframe with real line geometry), pose arrays.
+
+   This is **coupled across every pass**: the GL fragment shaders linearize their
+   output (`pow(color, 2.2)`) precisely because the composite re-encodes sRGB at
+   the end. The ported passes deliberately omit that step so the passthrough
+   present looks right, so the operators and the per-pass linearization have to
+   switch over together.
+2. Remaining geometry passes: meshes/PBR (the largest), markers (five programs,
+   incl. replacing `glPolygonMode` wireframe with real line geometry).
 3. Screen-space passes: SSAO and EDL. Both need the resolved single-sample depth
    the HDR chain already produces — `QRhi::ResolveDepthStencil` is supported on
    Metal, so the design carries over unchanged.
@@ -40,6 +69,18 @@ PNG for comparison against `tools/reference/`.
    fallback for backends without compute.
 5. Wiring `RhiSceneViewWidget` into `Scene3DDockWidget` behind a flag; today only
    the demo drives it.
+
+**Known deviations from the GL renderer** (deliberate, revisit at parity):
+
+- Gizmo shading is world-space Lambertian; GL shades in *view* space (a headlight,
+  so nothing is ever fully dark). With the shared shader's 0.55 ambient floor
+  nothing goes black either, so this is a look difference, not a legibility one.
+- Line width is capped at 1 px — Metal has no wide-line primitive.
+- `RhiVoxelGridPass` handles scalar (R32F) fields only; the direct-RGBA field and
+  the per-cube edge outline are not ported.
+- `RhiPosesPass` blends with depth-write on and no depth sort, matching the GL
+  pass: translucent arms occlude each other in draw order. Acceptable for gizmos,
+  and it avoids a per-frame sort over a particle cloud.
 
 **Two QRhi rules this port learned the hard way**, both silently accepted by Metal
 and both producing convincing-but-wrong output rather than an error:

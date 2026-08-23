@@ -13,6 +13,7 @@
 #include "pj_scene3d_widgets/rhi/rhi_hdr_target.h"
 #include "pj_scene3d_widgets/rhi/rhi_occupancy_grid_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_pointcloud_pass.h"
+#include "pj_scene3d_widgets/rhi/rhi_poses_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_present_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_render_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_tf_connections_pass.h"
@@ -38,36 +39,60 @@ class RhiSceneViewWidget : public QRhiWidget {
   ~RhiSceneViewWidget() override;
 
   /// The grid pass, exposed so demos and (later) the dock can set extent/colour.
-  RhiGridPass& gridPass() { return grid_pass_; }
+  RhiGridPass& gridPass() {
+    return grid_pass_;
+  }
   /// The TF triad pass, exposed so callers can push frame transforms.
-  RhiAxisPass& axisPass() { return axis_pass_; }
+  RhiAxisPass& axisPass() {
+    return axis_pass_;
+  }
   /// The point-cloud pass, exposed so callers can push points.
-  RhiPointcloudPass& pointcloudPass() { return pointcloud_pass_; }
+  RhiPointcloudPass& pointcloudPass() {
+    return pointcloud_pass_;
+  }
   /// The TF parent-connection line pass.
-  RhiTfConnectionsPass& tfConnectionsPass() { return tf_connections_pass_; }
+  RhiTfConnectionsPass& tfConnectionsPass() {
+    return tf_connections_pass_;
+  }
   /// The occupancy-grid / costmap pass.
-  RhiOccupancyGridPass& occupancyGridPass() { return occupancy_pass_; }
+  RhiOccupancyGridPass& occupancyGridPass() {
+    return occupancy_pass_;
+  }
   /// The dense voxel-grid pass.
-  RhiVoxelGridPass& voxelGridPass() { return voxel_pass_; }
+  RhiVoxelGridPass& voxelGridPass() {
+    return voxel_pass_;
+  }
+  /// The pose-array (PoseArray / PosesInFrame) triad pass.
+  RhiPosesPass& posesPass() {
+    return poses_pass_;
+  }
 
   /// Replace the camera model. The new model adopts the outgoing model's pose, so
   /// switching does not move the viewpoint.
   void setCamera(std::unique_ptr<ICamera> camera);
-  [[nodiscard]] ICamera* camera() const { return camera_.get(); }
+  [[nodiscard]] ICamera* camera() const {
+    return camera_.get();
+  }
 
   /// True once at least one frame has been recorded through a live pipeline —
   /// what a headless check should wait on before grabbing the framebuffer.
-  [[nodiscard]] bool hasRendered() const { return has_rendered_; }
+  [[nodiscard]] bool hasRendered() const {
+    return has_rendered_;
+  }
 
   /// Requested MSAA level for the off-screen chain. Independent of the widget's
   /// own sampleCount, which is 1 once composited in a dock — that is precisely
   /// why the anti-aliasing has to live on a target this widget owns.
   void setSceneSamples(int samples);
-  [[nodiscard]] int sceneSamples() const { return hdr_target_.sampleCount(); }
+  [[nodiscard]] int sceneSamples() const {
+    return hdr_target_.sampleCount();
+  }
 
   /// True when the frame went through the off-screen HDR chain rather than the
   /// direct-to-widget fallback. Lets a headless check assert which path ran.
-  [[nodiscard]] bool usedHdrChain() const { return used_hdr_chain_; }
+  [[nodiscard]] bool usedHdrChain() const {
+    return used_hdr_chain_;
+  }
 
  protected:
   void initialize(QRhiCommandBuffer* cb) override;
@@ -103,6 +128,7 @@ class RhiSceneViewWidget : public QRhiWidget {
   RhiTfConnectionsPass tf_connections_pass_;
   RhiOccupancyGridPass occupancy_pass_;
   RhiVoxelGridPass voxel_pass_;
+  RhiPosesPass poses_pass_;
 
   /// Off-screen multisample HDR chain the scene renders into, plus the fullscreen
   /// pass that composites it onto the widget target. When the chain cannot be

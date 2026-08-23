@@ -23,10 +23,10 @@
 #include <QString>
 #include <cmath>
 #include <cstdio>
+#include <glm/gtc/matrix_transform.hpp>
 #include <vector>
 
-#include <glm/gtc/matrix_transform.hpp>
-
+#include "pj_scene3d_core/poses_in_frame_render.h"
 #include "pj_scene3d_widgets/rhi/rhi_scene_view_widget.h"
 
 // Q_INIT_RESOURCE must sit at global scope: inside an anonymous namespace its
@@ -72,8 +72,10 @@ int main(int argc, char** argv) {
   view.axisPass().setAxisLength(0.8F);
   // Parent links for the same chain, so the tree structure is visible.
   view.tfConnectionsPass().setSegments({
-      glm::vec3(0.0F, 0.0F, 0.0F), glm::vec3(0.0F, 0.0F, 1.0F),
-      glm::vec3(0.0F, 0.0F, 1.0F), glm::vec3(1.2F, 0.6F, 1.8F),
+      glm::vec3(0.0F, 0.0F, 0.0F),
+      glm::vec3(0.0F, 0.0F, 1.0F),
+      glm::vec3(0.0F, 0.0F, 1.0F),
+      glm::vec3(1.2F, 0.6F, 1.8F),
   });
 
   // A spiral cloud in the SAME record layout the MCAP fixture publishes
@@ -93,8 +95,8 @@ int main(int argc, char** argv) {
     const float radius = 1.2F + (t * 2.5F);
     cloud.push_back({radius * std::cos(angle), radius * std::sin(angle), 0.4F + (t * 3.0F), t});
   }
-  view.pointcloudPass().setPoints(cloud.data(), static_cast<int>(cloud.size()),
-                                  pj::scene3d::rhi::RhiPointcloudPass::Layout{});
+  view.pointcloudPass().setPoints(
+      cloud.data(), static_cast<int>(cloud.size()), pj::scene3d::rhi::RhiPointcloudPass::Layout{});
   view.pointcloudPass().setScalarRange(0.0F, 1.0F);
   view.pointcloudPass().setColormap(PJ::Colormap::kTurbo);
   view.pointcloudPass().setPointRadius(0.045F);
@@ -116,7 +118,7 @@ int main(int argc, char** argv) {
           // A cone: wider at the bottom, so the shell reads clearly in 3D.
           const float wanted = 10.0F - (static_cast<float>(z) * 0.5F);
           const bool shell = std::abs(radius - wanted) < 1.2F;
-          field[(static_cast<size_t>(z) * vr * vc) + (static_cast<size_t>(y) * vc) + x] =
+          field[(static_cast<size_t>(z) * vr * vc) + (static_cast<size_t>(y) * vc) + static_cast<size_t>(x)] =
               shell ? (0.2F + (static_cast<float>(z) / static_cast<float>(vs))) : 0.0F;
         }
       }
@@ -152,7 +154,7 @@ int main(int argc, char** argv) {
         } else if (wall || blob) {
           v = 100;  // fully occupied
         }
-        cells[(static_cast<size_t>(r) * gw) + c] = v;
+        cells[(static_cast<size_t>(r) * gw) + static_cast<size_t>(c)] = v;
       }
     }
     auto& occ = view.occupancyGridPass();
@@ -168,10 +170,50 @@ int main(int argc, char** argv) {
     // patch, so the pass re-uploads that rectangle instead of the whole grid.
     // Carves a free corridor straight through the lethal blob.
     const QRect patch_rect(20, 55, 80, 10);
-    const std::vector<unsigned char> patch(
-        static_cast<size_t>(patch_rect.width()) * patch_rect.height(), 0);
+    const std::vector<unsigned char> patch(static_cast<size_t>(patch_rect.width()) * patch_rect.height(), 0);
     occ.updateRegion(patch_rect, patch.data());
   }
+  // Pose array, shaped like an AMCL particle cloud: a fan of single-X-arrow
+  // gizmos in one user colour at partial opacity, so the pass's override_color and
+  // blended-opacity paths both run. The instances stay FRAME-LOCAL and the frame's
+  // placement goes in via setFrameWorld(), which is the whole point of the pass —
+  // so a moving frame animates for the cost of one uniform write.
+  {
+    PJ::sdk::PosesInFrame msg;
+    msg.frame_id = "particles";
+    constexpr int kParticles = 72;
+    for (int i = 0; i < kParticles; ++i) {
+      const float t = static_cast<float>(i) / static_cast<float>(kParticles);
+      const float angle = t * 6.0F;
+      const float radius = 0.4F + (t * 1.9F);
+      PJ::sdk::Pose pose;
+      pose.position.x = static_cast<double>(radius * std::cos(angle));
+      pose.position.y = static_cast<double>(radius * std::sin(angle));
+      pose.position.z = 0.15 + (0.9 * static_cast<double>(t));
+      // Yaw tangent to the spiral: q = (0, 0, sin(yaw/2), cos(yaw/2)).
+      const double yaw = static_cast<double>(angle) + 1.5708;
+      pose.orientation.z = std::sin(yaw * 0.5);
+      pose.orientation.w = std::cos(yaw * 0.5);
+      msg.poses.push_back(pose);
+    }
+
+    pj::scene3d::PoseTriadStyle style;
+    style.axis_length = 0.42F;
+    style.x_arrow_only = true;
+    style.override_color = true;
+    style.color = glm::vec3(0.95F, 0.45F, 0.10F);
+    style.opacity = 0.75F;
+
+    auto& poses = view.posesPass();
+    poses.setInstances(pj::scene3d::buildPoseTriadInstances(msg, style));
+    // A non-identity parent frame: offset and yawed, so a wrong frame_world would
+    // be obvious rather than hiding behind the identity.
+    glm::mat4 frame_world(1.0F);
+    frame_world = glm::translate(frame_world, glm::vec3(3.4F, -2.2F, 0.0F));
+    frame_world = glm::rotate(frame_world, glm::radians(25.0F), glm::vec3(0.0F, 0.0F, 1.0F));
+    poses.setFrameWorld(frame_world);
+  }
+
   if (view.camera() != nullptr) {
     view.camera()->adoptState(referencePose());
   }
@@ -225,10 +267,12 @@ int main(int argc, char** argv) {
     tones.insert(frame.pixelColor(x, probe_y).green());
   }
 
-  std::printf("rhi_view: saved %s (%dx%d), %d non-background sample(s)\n", qPrintable(out), frame.width(),
-              frame.height(), drawn);
-  std::printf("rhi_view: hdr_chain=%s scene_samples=%d distinct_tones_on_scanline=%d\n",
-              view.usedHdrChain() ? "yes" : "NO (direct-to-widget fallback)", view.sceneSamples(),
-              static_cast<int>(tones.size()));
+  std::printf(
+      "rhi_view: saved %s (%dx%d), %d non-background sample(s)\n", qPrintable(out), frame.width(), frame.height(),
+      drawn);
+  std::printf(
+      "rhi_view: hdr_chain=%s scene_samples=%d distinct_tones_on_scanline=%d\n",
+      view.usedHdrChain() ? "yes" : "NO (direct-to-widget fallback)", view.sceneSamples(),
+      static_cast<int>(tones.size()));
   return drawn > 0 ? 0 : 2;
 }
