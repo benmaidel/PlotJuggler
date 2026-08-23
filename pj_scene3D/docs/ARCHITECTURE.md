@@ -6,6 +6,56 @@ distilled, as-built successor to the executed planning docs
 `CODEX_PROMPTS_URDF_MESH.md` — all removed 2026-06-10; see git history for the
 full design rationale). The WHAT lives in [REQUIREMENTS.md](./REQUIREMENTS.md).
 
+## QRhi / Metal port (in progress)
+
+The renderer described below is the **OpenGL** one, and it is still the shipping
+path on Linux. It cannot run on macOS at all: it needs an OpenGL 4.5 core context
+plus a compute shader, and Apple's OpenGL is frozen at 4.1 with no compute. A
+second renderer is therefore being built on Qt's **QRhi** (Metal on macOS, OpenGL
+elsewhere) under `widgets/{include/pj_scene3d_widgets,src}/rhi/`, landing pass by
+pass so Linux keeps the proven path until parity is reached.
+
+Ported so far: the `RhiSceneViewWidget` host (camera, depth, clip-space
+correction), the off-screen MSAA/HDR chain + present pass (`RhiHdrTarget`,
+`RhiPresentPass`), the ground grid (`RhiGridPass`), TF triads (`RhiAxisPass`,
+instanced), and point clouds (`RhiPointcloudPass`). Drive it with
+`demos/rhi_view.cpp` (`scene3d_rhi_view`), which renders one frame headlessly to a
+PNG for comparison against `tools/reference/`.
+
+**Still to do**, roughly in order of value:
+
+1. **Composite operators.** The present pass is deliberately a passthrough with
+   exposure only. The GL composite is exposure → tonemap (None/ACES/AgX/Neutral)
+   → saturation → manual sRGB encode, plus the far-plane background bypass and the
+   SSAO/EDL multiply. Until these land, QRhi colours are *correct* but will not
+   match the GL renderer's look. Note the ordering is load-bearing: ACES
+   desaturates, which is why saturation (1.3) follows it rather than preceding it.
+2. Remaining geometry passes: TF connection lines, occupancy grid, voxel grid,
+   meshes/PBR (the largest), markers (five programs, incl. replacing
+   `glPolygonMode` wireframe with real line geometry), pose arrays.
+3. Screen-space passes: SSAO and EDL. Both need the resolved single-sample depth
+   the HDR chain already produces — `QRhi::ResolveDepthStencil` is supported on
+   Metal, so the design carries over unchanged.
+4. The compute AABB reducer → `QRhiComputePipeline`, keeping the documented CPU
+   fallback for backends without compute.
+5. Wiring `RhiSceneViewWidget` into `Scene3DDockWidget` behind a flag; today only
+   the demo drives it.
+
+**Two QRhi rules this port learned the hard way**, both silently accepted by Metal
+and both producing convincing-but-wrong output rather than an error:
+
+- A pipeline is compiled against the resource **layout** of the
+  `QRhiShaderResourceBindings` it is created with. Bind placeholders so the layout
+  is final at pipeline-creation time; swapping one texture for another at the same
+  binding afterwards is fine.
+- A pipeline's **sample count must equal its render target's**. A mismatch writes
+  only a fraction of the samples, which reads as a uniformly washed-out,
+  semi-transparent draw — not as an obvious failure.
+
+Also note `clipSpaceCorrMatrix()` fixes NDC (Y direction *and* depth range) for
+geometry, but says nothing about how a rendered texture is later **sampled**: the
+present pass needs a separate flip driven by `QRhi::isYUpInFramebuffer()`.
+
 ## Rendering pipeline
 
 Per frame, `SceneViewWidget::paintGL`:

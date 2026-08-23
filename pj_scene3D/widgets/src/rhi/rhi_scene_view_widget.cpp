@@ -78,7 +78,9 @@ void RhiSceneViewWidget::setSceneSamples(int samples) {
 std::vector<IRhiRenderPass*> RhiSceneViewWidget::passes() {
   // Grid first: it does not write depth, so drawing it before the opaque triads
   // lets them occlude it correctly rather than the reverse.
-  return {&grid_pass_, &pointcloud_pass_, &axis_pass_};
+  // Grid and connection lines first (neither writes depth), then the opaque
+  // cloud and triads so they occlude the annotations correctly.
+  return {&grid_pass_, &tf_connections_pass_, &pointcloud_pass_, &axis_pass_};
 }
 
 glm::mat4 RhiSceneViewWidget::buildViewProj(const QSize& pixel_size) const {

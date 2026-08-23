@@ -33,14 +33,15 @@ class RhiGridPass final : public IRhiRenderPass {
   void setLineColor(const glm::vec4& rgba) { line_color_ = rgba; }
 
  private:
-  /// Mirrors the GridUbo block in shaders/grid.{vert,frag}. std140 puts the mat4
-  /// at offset 0 and the vec4 at 64; the total is already a multiple of 16, so no
-  /// tail padding is needed. Keep this in lockstep with the shader.
-  struct alignas(16) GridUbo {
+  /// Mirrors the LinesUbo block in shaders/lines.{vert,frag} (shared with the TF
+  /// connections pass). std140 puts the mat4 at offset 0 and the vec4 at 64; the
+  /// total is already a multiple of 16, so no tail padding is needed. Keep this in
+  /// lockstep with the shader.
+  struct alignas(16) LinesUbo {
     float view_proj[16];
     float line_color[4];
   };
-  static_assert(sizeof(GridUbo) == 80, "GridUbo must match the std140 block layout");
+  static_assert(sizeof(LinesUbo) == 80, "LinesUbo must match the std140 block layout");
 
   QRhi* rhi_ = nullptr;
   /// Sample count the current pipeline was built for; a change forces a rebuild.

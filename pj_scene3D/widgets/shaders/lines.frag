@@ -4,10 +4,10 @@
 
 layout(location = 0) out vec4 frag_color;
 
-// Must match grid.vert field for field: QRhi's OpenGL backend maps std140 block
+// Must match lines.vert field for field: QRhi's OpenGL backend maps std140 block
 // members BY NAME from the SPIRV-Cross output, so both stages declare the whole
 // block even when one of them reads only part of it.
-layout(std140, binding = 0) uniform GridUbo {
+layout(std140, binding = 0) uniform LinesUbo {
   mat4 view_proj;
   vec4 line_color;
 };

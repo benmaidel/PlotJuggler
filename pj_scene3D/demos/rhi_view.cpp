@@ -69,6 +69,11 @@ int main(int argc, char** argv) {
       glm::translate(glm::mat4(1.0F), glm::vec3(1.2F, 0.6F, 1.8F)),
   });
   view.axisPass().setAxisLength(0.8F);
+  // Parent links for the same chain, so the tree structure is visible.
+  view.tfConnectionsPass().setSegments({
+      glm::vec3(0.0F, 0.0F, 0.0F), glm::vec3(0.0F, 0.0F, 1.0F),
+      glm::vec3(0.0F, 0.0F, 1.0F), glm::vec3(1.2F, 0.6F, 1.8F),
+  });
 
   // A spiral cloud in the SAME record layout the MCAP fixture publishes
   // (contiguous float32 xyz then a float32 scalar, 16-byte stride), so this

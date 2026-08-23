@@ -1,24 +1,23 @@
 // Copyright 2026 Davide Faconti
 // SPDX-License-Identifier: MPL-2.0
 
-#include "pj_scene3d_widgets/rhi/rhi_grid_pass.h"
+#include "pj_scene3d_widgets/rhi/rhi_tf_connections_pass.h"
 
 #include <QFile>
 #include <QLoggingCategory>
+#include <algorithm>
 #include <cstring>
-#include <vector>
-
-#include "pj_scene3d_widgets/passes/grid_geometry.h"
+#include <utility>
 
 namespace pj::scene3d::rhi {
 namespace {
 
-Q_LOGGING_CATEGORY(lcRhiGrid, "pj.scene3d.rhi.grid")
+Q_LOGGING_CATEGORY(lcRhiTf, "pj.scene3d.rhi.tf_connections")
 
 QShader loadBakedShader(const QString& path) {
   QFile file(path);
   if (!file.open(QIODevice::ReadOnly)) {
-    qCWarning(lcRhiGrid) << "missing baked shader" << path;
+    qCWarning(lcRhiTf) << "missing baked shader" << path;
     return {};
   }
   return QShader::fromSerialized(file.readAll());
@@ -26,24 +25,23 @@ QShader loadBakedShader(const QString& path) {
 
 }  // namespace
 
-RhiGridPass::~RhiGridPass() {
+RhiTfConnectionsPass::~RhiTfConnectionsPass() {
   release();
 }
 
-void RhiGridPass::setGeometry(float extent_m, int divisions) {
-  if (extent_m == extent_m_ && divisions == divisions_) {
-    return;
+void RhiTfConnectionsPass::setSegments(std::vector<glm::vec3> endpoints) {
+  // Drop an unpaired tail rather than draw a segment to an undefined point.
+  if ((endpoints.size() % 2U) != 0U) {
+    endpoints.pop_back();
   }
-  extent_m_ = extent_m;
-  divisions_ = divisions;
+  endpoints_ = std::move(endpoints);
   geometry_dirty_ = true;
 }
 
-bool RhiGridPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd, int sample_count) {
+bool RhiTfConnectionsPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd, int sample_count) {
   if (pipeline_ != nullptr && rhi_ == &rhi && sample_count_ == sample_count) {
     return true;
   }
-  // A different QRhi means the old device's objects are already invalid.
   release();
   rhi_ = &rhi;
   sample_count_ = sample_count;
@@ -51,7 +49,6 @@ bool RhiGridPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd, int sampl
   const QShader vert = loadBakedShader(QStringLiteral(":/scene3d_shaders/lines.vert.qsb"));
   const QShader frag = loadBakedShader(QStringLiteral(":/scene3d_shaders/lines.frag.qsb"));
   if (!vert.isValid() || !frag.isValid()) {
-    qCWarning(lcRhiGrid) << "grid shader pack unusable for this backend; pass disabled";
     release();
     return false;
   }
@@ -61,7 +58,6 @@ bool RhiGridPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd, int sampl
     release();
     return false;
   }
-
   srb_ = rhi.newShaderResourceBindings();
   srb_->setBindings({QRhiShaderResourceBinding::uniformBuffer(
       0, QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage, ubo_)});
@@ -74,18 +70,16 @@ bool RhiGridPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd, int sampl
   pipeline_->setTopology(QRhiGraphicsPipeline::Lines);
   pipeline_->setShaderStages({{QRhiShaderStage::Vertex, vert}, {QRhiShaderStage::Fragment, frag}});
 
-  // GridVertex is {glm::vec3 pos; float parity;} == 16 bytes. Only the position
-  // is declared: the lines pass ignores parity, and an undeclared trailing
-  // attribute costs nothing because the stride already accounts for it.
+  // Tight vec3 endpoints: the shared shader reads only the position, so this pass
+  // needs no padding to match the grid's wider vertex.
   QRhiVertexInputLayout layout;
-  layout.setBindings({QRhiVertexInputBinding(sizeof(GridVertex))});
+  layout.setBindings({QRhiVertexInputBinding(sizeof(glm::vec3))});
   layout.setAttributes({QRhiVertexInputAttribute(0, 0, QRhiVertexInputAttribute::Float3, 0)});
   pipeline_->setVertexInputLayout(layout);
 
-  // The grid is a depth-tested opaque draw so geometry can occlude it, but it
-  // must not write depth: it is a reference overlay on the ground plane, and
-  // letting it own depth would make thin lines reject fragments of objects
-  // resting exactly on z=0.
+  // Annotation, not geometry: depth-tested so it is occluded by solid objects, but
+  // not depth-writing, so a thin line never rejects fragments of the frames it
+  // connects.
   pipeline_->setDepthTest(true);
   pipeline_->setDepthWrite(false);
   pipeline_->setCullMode(QRhiGraphicsPipeline::None);
@@ -94,48 +88,53 @@ bool RhiGridPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd, int sampl
   pipeline_->setSampleCount(sample_count_);
   pipeline_->setRenderPassDescriptor(&rpd);
   if (!pipeline_->create()) {
-    qCWarning(lcRhiGrid) << "grid pipeline creation failed";
+    qCWarning(lcRhiTf) << "TF connections pipeline creation failed";
     release();
     return false;
   }
-
-  // Force a re-upload: the vertex buffer belongs to the previous device.
   geometry_dirty_ = true;
   return true;
 }
 
-void RhiGridPass::prepare(QRhiResourceUpdateBatch& updates, const RhiFrameContext& ctx) {
+void RhiTfConnectionsPass::prepare(QRhiResourceUpdateBatch& updates, const RhiFrameContext& ctx) {
   if (pipeline_ == nullptr || rhi_ == nullptr) {
     return;
   }
 
   if (geometry_dirty_) {
-    const std::vector<GridVertex> vertices = buildGridLines(extent_m_, divisions_);
-    const int bytes = static_cast<int>(vertices.size() * sizeof(GridVertex));
-    // Immutable: the tessellation only changes when the user edits extent or
-    // divisions, which re-creates the buffer rather than streaming it per frame.
-    delete vbo_;
-    vbo_ = rhi_->newBuffer(QRhiBuffer::Immutable, QRhiBuffer::VertexBuffer, bytes);
-    if (vbo_ == nullptr || !vbo_->create()) {
-      vertex_count_ = 0;
-      return;
+    const int needed = static_cast<int>(endpoints_.size());
+    if (needed > vertex_capacity_) {
+      // Grow geometrically: a live TF tree gains frames over time, and Dynamic
+      // because the endpoints move every time the transforms update.
+      delete vbo_;
+      vertex_capacity_ = std::max(needed * 2, 64);
+      vbo_ = rhi_->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer,
+                             static_cast<quint32>(vertex_capacity_) * static_cast<quint32>(sizeof(glm::vec3)));
+      if (vbo_ == nullptr || !vbo_->create()) {
+        vertex_capacity_ = 0;
+        vertex_count_ = 0;
+        return;
+      }
     }
-    updates.uploadStaticBuffer(vbo_, vertices.data());
-    vertex_count_ = static_cast<int>(vertices.size());
+    if (needed > 0 && vbo_ != nullptr) {
+      updates.updateDynamicBuffer(vbo_, 0, static_cast<quint32>(needed * static_cast<int>(sizeof(glm::vec3))),
+                                  endpoints_.data());
+    }
+    vertex_count_ = needed;
     geometry_dirty_ = false;
   }
 
   LinesUbo ubo{};
   std::memcpy(ubo.view_proj, &ctx.view_proj[0][0], sizeof(ubo.view_proj));
-  ubo.line_color[0] = line_color_.r;
-  ubo.line_color[1] = line_color_.g;
-  ubo.line_color[2] = line_color_.b;
-  ubo.line_color[3] = line_color_.a;
+  ubo.color[0] = color_.r;
+  ubo.color[1] = color_.g;
+  ubo.color[2] = color_.b;
+  ubo.color[3] = color_.a;
   updates.updateDynamicBuffer(ubo_, 0, sizeof(LinesUbo), &ubo);
 }
 
-void RhiGridPass::draw(QRhiCommandBuffer& cb, const RhiFrameContext& /*ctx*/) {
-  if (pipeline_ == nullptr || vbo_ == nullptr || vertex_count_ == 0) {
+void RhiTfConnectionsPass::draw(QRhiCommandBuffer& cb, const RhiFrameContext& /*ctx*/) {
+  if (pipeline_ == nullptr || vbo_ == nullptr || vertex_count_ < 2) {
     return;
   }
   cb.setGraphicsPipeline(pipeline_);
@@ -145,7 +144,7 @@ void RhiGridPass::draw(QRhiCommandBuffer& cb, const RhiFrameContext& /*ctx*/) {
   cb.draw(static_cast<quint32>(vertex_count_));
 }
 
-void RhiGridPass::release() {
+void RhiTfConnectionsPass::release() {
   delete pipeline_;
   pipeline_ = nullptr;
   delete srb_;
@@ -155,6 +154,7 @@ void RhiGridPass::release() {
   delete vbo_;
   vbo_ = nullptr;
   vertex_count_ = 0;
+  vertex_capacity_ = 0;
   geometry_dirty_ = true;
   rhi_ = nullptr;
 }
