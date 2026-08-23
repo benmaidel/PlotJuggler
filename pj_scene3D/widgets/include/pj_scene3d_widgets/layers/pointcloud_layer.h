@@ -19,6 +19,7 @@
 #include "pj_base/builtin/compressed_point_cloud.hpp"
 #include "pj_base/builtin/point_cloud.hpp"
 #include "pj_scene3d_widgets/passes/pointcloud_render_pass.h"
+#include "pj_scene3d_widgets/pointcloud_sink.h"
 #include "pj_scene3d_widgets/scene3d_layer.h"
 
 class QWidget;
@@ -348,7 +349,44 @@ class PointCloudLayer : public Scene3DLayer {
   // pre-reload content, so onDecodeFinished must not cache or memoize it.
   bool drop_inflight_result_ = false;
 
+  // The OpenGL pass this layer owns, and the sink its decoded output is routed to.
+  //
+  // The owned pass is the DEFAULT sink, which is what keeps the OpenGL path
+  // byte-identical: decode state and display parameters go through sink(), while the
+  // render-context lifecycle (initializeGL / render / releaseGL) stays on the
+  // concrete pass, since that is inherently backend-shaped.
+  //
+  // setSink() redirects the decoded output elsewhere — the QRhi renderer's point
+  // cloud pass — so all of the decode machinery above (async Draco/Cloudini decode,
+  // sample identity caching, latest-wins coalescing, colour fields, auto-range) is
+  // shared rather than reimplemented per backend. While redirected the owned GL pass
+  // is inert: the QRhi view never calls the layer's GL hooks, so it allocates
+  // nothing. Inverting that ownership is a later step.
   PointcloudRenderPass cloud_pass_;
+  IPointCloudSink* sink_ = nullptr;
+
+  // Explicit returns rather than a ternary: the two arms have no common type the
+  // conditional operator can settle on (IPointCloudSink& vs PointcloudRenderPass&),
+  // whereas each return converts to the declared type independently.
+  [[nodiscard]] IPointCloudSink& sink() {
+    if (sink_ != nullptr) {
+      return *sink_;
+    }
+    return cloud_pass_;
+  }
+  [[nodiscard]] const IPointCloudSink& sink() const {
+    if (sink_ != nullptr) {
+      return *sink_;
+    }
+    return cloud_pass_;
+  }
+
+ public:
+  /// Redirect this layer's decoded output. nullptr restores the owned OpenGL pass.
+  /// Safe at any time; the next decode or parameter change lands on the new sink.
+  void setSink(IPointCloudSink* sink) {
+    sink_ = sink;
+  }
 };
 
 }  // namespace pj::scene3d

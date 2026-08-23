@@ -71,14 +71,39 @@ exactly the class of bug QRhi does not report:
    `TransformService`. What is missing is everything driven by layers, and that is
    blocked on a genuine architectural prerequisite rather than on wiring:
 
-   `Scene3DDockWidget` drives its content through `Scene3DLayer`, and all seven
-   layer types **fuse decoding with OpenGL upload** — each implements
-   `initializeGL()` / `render(ViewParams, FrameContext)` and owns GL `IRenderPass`
-   objects internally, with no seam exposing the decoded render structs. So the real
-   dock cannot simply swap renderers underneath. The unlock is to split decode from
-   upload across those layers (each exposing its decoded struct plus render key, with
-   a backend-specific binder driving GL or QRhi passes), which is a workstream of its
-   own and is why the preview dock exists in the meantime.
+   `Scene3DDockWidget` drives its content through `Scene3DLayer`, and the layer types
+   **fuse decoding with OpenGL upload** — each implements `initializeGL()` /
+   `render(ViewParams, FrameContext)` and owns GL `IRenderPass` objects internally,
+   with no seam exposing the decoded render structs. The unlock is to split decode
+   from upload per layer; see "The layer decode/upload split" below for the shape and
+   for which layers are done.
+
+### The layer decode/upload split
+
+**Seam defined for point clouds. No QRhi consumer of it yet. Remaining layer types:
+meshes/URDF, scene entities, occupancy grid, voxel grid, poses-in-frame, depth
+cloud.**
+
+The split point is not arbitrary — `PointCloudLayer`'s own header already named it:
+`pushCloud()` is *"the single point where a cloud reaches the GPU"*. Everything above
+that line (async Draco/Cloudini decode on the thread pool, sample-identity caching,
+latest-wins coalescing, colour-field discovery, auto-range, XML state) is
+backend-agnostic; only the final upload is not. So the seam goes exactly there:
+
+- **`pointcloud_sink.h`** declares `IPointCloudSink` plus the display enums and
+  `FastCloudData`, free of both OpenGL and QRhi. The enums used to be nested in
+  `PointcloudRenderPass`; they moved here with `using` aliases left behind, so every
+  `PointcloudRenderPass::Shape` call site still compiles untouched.
+- **`PointcloudRenderPass` implements it**, and remains the layer's *default* sink.
+  That is what makes the refactor behaviour-neutral for OpenGL: display state and
+  data go through `sink()`, while the render-context lifecycle
+  (`initializeGL`/`render`/`releaseGL`) stays on the concrete pass, since that part
+  genuinely is backend-shaped.
+
+`PointCloudLayer::setSink()` redirects the output; passing nullptr restores the owned
+OpenGL pass. Note the layer still *owns* a GL pass even when redirected — inert,
+because the QRhi view never calls its GL hooks. Inverting that ownership is a later
+step; it is called out here so nobody mistakes it for the intended end state.
 
 ### Scene3DRhiPreviewDock — what it is for
 

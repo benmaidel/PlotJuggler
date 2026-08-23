@@ -18,24 +18,16 @@
 #include "pj_scene3d_widgets/gl/program.h"
 #include "pj_scene3d_widgets/gl/vertex_array.h"
 #include "pj_scene3d_widgets/passes/pointcloud_aabb_reducer.h"
+#include "pj_scene3d_widgets/pointcloud_sink.h"
 #include "pj_scene3d_widgets/render_pass.h"
 #include "pj_widgets/Colormap.h"  // shared Colormap enum + colormapGlsl()
 
 namespace pj::scene3d {
 
-struct DecodedPointCloud;  // forward-declare — defined in pj_scene3d_core/pointcloud.h
+// DecodedPointCloud and FastCloudData now come from pointcloud_sink.h, which is the
+// backend-agnostic seam this pass implements.
 
-// Fast-path retained state: the verbatim wire cloud (its anchor keeps bytes alive
-// across GL-context recreation) + the precomputed bind layout. Hold wire BY VALUE
-// (copies the BufferAnchor) — never reduce to a Span, or recreation re-uploads a
-// dangling view.
-struct FastCloudData {
-  PJ::sdk::PointCloud wire;    // frame_id / data / anchor all live here — read wire.frame_id
-  std::size_t point_count{0};  // == wire.width * wire.height (size_t: no uint32 overflow)
-  AttribLayout layout;
-};
-
-class PointcloudRenderPass : public IRenderPass {
+class PointcloudRenderPass : public IRenderPass, public IPointCloudSink {
  public:
   // Shape mode for each point.
   //   kSphere  — world-radius sphere imposter; foreshortens with depth under a
@@ -44,7 +36,10 @@ class PointcloudRenderPass : public IRenderPass {
   //   kCube    — instanced 3D cube, fixed-frame-axis-aligned. Wired in
   //              Stage 6; the setter is accepted today but the draw call
   //              falls back to sphere until the cube program lands.
-  enum class Shape { kSphere, kPoint, kCube };
+  // The shape/colour enums moved to pointcloud_sink.h so a backend-agnostic layer
+  // can name them; these aliases keep every PointcloudRenderPass::Shape call site
+  // working unchanged.
+  using Shape = PointcloudShape;
 
   // Color sourcing mode.
   //   kField — per-point scalar → colormap → fragment color (today).
@@ -52,7 +47,7 @@ class PointcloudRenderPass : public IRenderPass {
   //   kRgb   — per-point packed RGBA color used directly (no colormap). Requires
   //            the active cloud to carry `DecodedPointCloud::rgba`; falls back to
   //            white when absent.
-  enum class ColorType { kField, kSolid, kRgb };
+  using ColorType = PointcloudColorType;
 
   // Colormap selector (used only in ColorType::kField mode). The colormap set +
   // its math (CPU LUT and the in-shader GLSL) is shared with the 2D depth view
@@ -69,8 +64,8 @@ class PointcloudRenderPass : public IRenderPass {
   // Replaces the cloud being rendered. Triggers VBO re-upload on next render.
   // If cloud is non-null and cloud->scalar.size() == cloud->positions.size(),
   // the scalar attribute is uploaded; otherwise scalars default to 0.
-  void setActiveCloud(std::shared_ptr<const DecodedPointCloud> cloud);
-  void setActiveFastCloud(FastCloudData cloud);
+  void setActiveCloud(std::shared_ptr<const DecodedPointCloud> cloud) override;
+  void setActiveFastCloud(FastCloudData cloud) override;
 
   // GPU AABB reduction (fast path only). When enabled, render() dispatches a
   // compute reduction of the fast-path VBO's geometric bounds after each upload
@@ -78,35 +73,35 @@ class PointcloudRenderPass : public IRenderPass {
   // through setBoundsCallback(). The caller (PointCloudLayer) only enables this
   // once the layout is GPU-eligible (4-byte-aligned float32 xyz) and keeps a CPU
   // scan running until gpuAabbAvailable() confirms the compute path works.
-  void setGpuAabbEnabled(bool enabled) {
+  void setGpuAabbEnabled(bool enabled) override {
     gpu_aabb_enabled_ = enabled;
   }
   // Invoked from render() (GL thread) with the freshly read-back source-frame
   // AABB whenever an async reduction completes. An invalid AABB means the cloud
   // had no finite points.
-  void setBoundsCallback(std::function<void(std::optional<AABB>)> callback) {
+  void setBoundsCallback(std::function<void(std::optional<AABB>)> callback) override {
     bounds_callback_ = std::move(callback);
   }
   // True once the compute reduction has compiled+linked on this context (known
   // only after the first dispatch). Lets the layer drop its CPU scan.
-  [[nodiscard]] bool gpuAabbAvailable() const {
+  [[nodiscard]] bool gpuAabbAvailable() const override {
     return aabb_reducer_.available();
   }
   // True once a dispatch has been attempted, so gpuAabbAvailable() is
   // authoritative (distinguishes "not yet probed" from "probed, unsupported").
-  [[nodiscard]] bool gpuAabbProbed() const {
+  [[nodiscard]] bool gpuAabbProbed() const override {
     return aabb_reducer_.probed();
   }
 
   // Range used to normalize the scalar field to [0,1] for the colormap.
-  void setColormapRange(float min_value, float max_value);
+  void setColormapRange(float min_value, float max_value) override;
 
   // FIXED-FRAME axis colouring. -1 (default) → colour by the uploaded per-point
   // scalar attribute. 0/1/2 → ignore the attribute and colour by the x/y/z
   // coordinate of the point AFTER the source→fixed model transform, computed on
   // the GPU in the vertex shader. This keeps colour-by-height consistent across
   // sensors at different mounts (the raw x/y/z field is sensor-local).
-  void setScalarAxis(int axis);
+  void setScalarAxis(int axis) override;
 
   // Source-frame bounds that drive the auto colormap range when setScalarAxis()
   // selected a spatial axis. When engaged, render() derives the [min,max] for
@@ -114,38 +109,38 @@ class PointcloudRenderPass : public IRenderPass {
   // place the geometry — so colour and range never disagree as the TF moves.
   // Pass std::nullopt to fall back to the explicit setColormapRange() values
   // (manual range, or a non-spatial field's scalar range).
-  void setSpatialAutoBounds(std::optional<AABB> source_bounds);
+  void setSpatialAutoBounds(std::optional<AABB> source_bounds) override;
 
   // World-coordinate radius for sphere shape (and side length for cube once
   // Stage 6 lands). Default 0.01 m = 1 cm — chosen to match the pre-Stage-5
   // visuals exactly. Stage 7's UI will surface a larger default.
-  void setSizeMeters(float meters);
+  void setSizeMeters(float meters) override;
 
   // Pixel size for kPoint shape (ignored in sphere/cube). Fractional sizes are
   // honoured (gl_PointSize is a float). Clamped to >= 1 px. Default 2 px.
-  void setSizePixels(float pixels);
+  void setSizePixels(float pixels) override;
 
   // Shape selector — see enum above. Default kSphere.
-  void setShape(Shape shape);
+  void setShape(Shape shape) override;
 
   // Color-sourcing selector — see enum above. Default kField.
-  void setColorType(ColorType type);
+  void setColorType(ColorType type) override;
 
   // Uniform color used when ColorType == kSolid. Components in [0,1].
   // Default = white.
-  void setSolidColor(glm::vec3 rgb);
+  void setSolidColor(glm::vec3 rgb) override;
 
   // Colormap used when ColorType == kField. Default kTurbo.
-  void setColormap(Colormap cm);
+  void setColormap(Colormap cm) override;
 
   // When true, the LUT is sampled with t replaced by (1 - t) — same min/max
   // mapping, reversed color progression. Default false.
-  void setInvertLut(bool invert);
+  void setInvertLut(bool invert) override;
 
   // Per-pass visibility — when false, render() is a no-op. Used by
   // SceneViewWidget to hide individual pointcloud topics without
   // destroying their GL state. Default true.
-  void setVisible(bool visible) {
+  void setVisible(bool visible) override {
     visible_ = visible;
   }
   [[nodiscard]] bool isVisible() const {
