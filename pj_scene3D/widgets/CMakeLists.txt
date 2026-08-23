@@ -1,7 +1,16 @@
 set(CMAKE_AUTOMOC ON)
 
 find_package(OpenGL REQUIRED)
-find_package(Qt6 REQUIRED COMPONENTS Xml Concurrent Network)
+# GuiPrivate exposes <rhi/qrhi.h>, and ShaderTools provides qt6_add_shaders()/`qsb`.
+# Both are needed by the QRhi renderer that is replacing the hand-written GL path;
+# GuiPrivate must be requested in THIS scope (Qt 6.11 no longer leaks the imported
+# target across subdirectories the way 6.8 did).
+find_package(Qt6 REQUIRED COMPONENTS Xml Concurrent Network GuiPrivate ShaderTools)
+if(NOT TARGET Qt6::ShaderTools)
+  message(FATAL_ERROR
+    "pj_scene3d_widgets: Qt6 ShaderTools (the `qsb` shader baker) not found. "
+    "Reinstall Qt with the qtshadertools module: ./install_qt6.sh")
+endif()
 find_package(assimp REQUIRED)
 
 set(PJ_SCENE3D_WIDGETS_SOURCES
@@ -88,7 +97,33 @@ target_compile_options(pj_scene3d_widgets PRIVATE
 )
 target_link_libraries(pj_scene3d_widgets
   PUBLIC pj_scene3d_core pj_scene_common pj_runtime pj_plugin_runtime_catalog pj_widgets Qt6::Widgets Qt6::OpenGLWidgets Qt6::Xml OpenGL::GL
-  PRIVATE pj_internal_fmt Qt6::Concurrent Qt6::Network assimp::assimp
+  PRIVATE pj_internal_fmt Qt6::Concurrent Qt6::Network Qt6::GuiPrivate assimp::assimp
+)
+
+# ---------------------------------------------------------------------------
+# Shaders (QRhi renderer)
+# ---------------------------------------------------------------------------
+#
+# The GL renderer keeps its GLSL as `#version 450 core` raw-string literals
+# compiled at runtime. The QRhi renderer cannot: QRhi consumes pre-baked Qt
+# shader packs, so every ported pass gets a .vert/.frag here that is compiled to
+# .qsb at BUILD time and embedded in a Qt resource.
+#
+# Targets mirror pj_scene2D: GLSL 410 + 440 for the OpenGL backend (410 is the
+# ceiling a macOS GL context could offer) and MSL 12 for Metal. HLSL is not
+# requested — nothing uses the D3D backends yet.
+#
+# Naming the resource `scene3d_shaders` keeps it distinct from pj_scene2D's
+# `shaders` resource; both are STATIC libraries linked into the same binary, so
+# colliding resource names would collide their Q_INIT_RESOURCE symbols.
+qt6_add_shaders(pj_scene3d_widgets "scene3d_shaders"
+  PREFIX "/scene3d_shaders"
+  BASE "shaders"
+  GLSL "410,440"
+  MSL 12
+  FILES
+    shaders/rhi_probe.vert
+    shaders/rhi_probe.frag
 )
 
 # ---------------------------------------------------------------------------
