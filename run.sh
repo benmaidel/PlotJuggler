@@ -74,8 +74,30 @@ if [ "$user_set_plugin_dir" -eq 0 ]; then
   if [ -d "$DEFAULT_PLUGIN_DIR" ]; then
     app_args+=("--plugin-dir" "$DEFAULT_PLUGIN_DIR")
   else
-    echo "run.sh: no plugin dir at ${DEFAULT_PLUGIN_DIR} — data-source plugins (MCAP, CSV, …) won't load." >&2
-    echo "run.sh: build them with: (cd ../pj-official-plugins && ./build.sh)" >&2
+    # Fallback: building the plugin repo per-plugin (rather than its `all` target)
+    # leaves each DSO in its OWN <plugin>/Release/bin, so the combined dir above
+    # never appears and a plain ./run.sh reports "no DataSource plugin handles
+    # .mcap files" despite the plugins being built. --plugin-dir accepts exactly
+    # ONE directory, so symlink whatever exists into one staging dir — the same
+    # trick pj_scene3D/tools/screenshot_3d.sh uses.
+    STAGED_PLUGIN_DIR="${SCRIPT_DIR}/build/run_plugins"
+    staged_count=0
+    mkdir -p "$STAGED_PLUGIN_DIR"
+    plugin_glob_root="${SCRIPT_DIR}/../pj-official-plugins/build"
+    for dso in "$plugin_glob_root"/*/Release/bin/*.so "$plugin_glob_root"/*/Release/bin/*.dylib; do
+      # Unmatched globs stay literal (no nullglob), so test before linking.
+      [ -e "$dso" ] || continue
+      ln -sf "$dso" "$STAGED_PLUGIN_DIR/"
+      staged_count=$((staged_count + 1))
+    done
+    if [ "$staged_count" -gt 0 ]; then
+      echo "run.sh: no combined plugin dir; staged ${staged_count} plugin(s) from per-plugin build dirs" >&2
+      echo "run.sh:   -> ${STAGED_PLUGIN_DIR}" >&2
+      app_args+=("--plugin-dir" "$STAGED_PLUGIN_DIR")
+    else
+      echo "run.sh: no plugin dir at ${DEFAULT_PLUGIN_DIR} — data-source plugins (MCAP, CSV, …) won't load." >&2
+      echo "run.sh: build them with: (cd ../pj-official-plugins && ./build.sh)" >&2
+    fi
   fi
 fi
 
