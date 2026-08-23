@@ -36,11 +36,21 @@ Ported so far:
 Drive it with `demos/rhi_view.cpp` (`scene3d_rhi_view`), which renders one frame
 headlessly to a PNG for comparison against `tools/reference/`.
 
-**Verification gap:** the ported passes have no `ctest` coverage — the demo is the
-harness, and it is checked by eye plus its own non-background/tone-count assertions.
-An offscreen-`QRhi` test fixture would cover all of them at once and is the highest
--value next step on the testing side; a per-pass test before that fixture exists
-would mostly be rebuilding it.
+**Coverage:** `tests/rhi_passes_test.cpp` renders every ported pass through an
+offscreen QRhi using the production HDR chain and composite. Its assertions are
+shaped around this port's actual failure mode rather than pixel goldens — "did
+anything draw at all", "does the background survive the composite byte-exact", "is
+annotation geometry still bypassing the tonemap" — because QRhi reports success for a
+pipeline built against an empty binding layout, one whose sample count disagrees with
+its target, or a uniform block smaller than the shader reads.
+
+Two things make it worth more than its size suggests. It needs no OpenGL 4.5, so it
+runs on macOS/Metal — where every `*_gl_test` reports *Passed* to ctest while
+internally skipping every case, meaning a green suite there says nothing about the
+OpenGL renderer. And it immediately found a latent crash: `RhiMeshPass` sized its
+per-draw uniform staging only when GROWING past the capacity `initialize()` had
+already set, so a scene with exactly one submesh wrote into an empty vector. Every
+demo had seven or more, so nothing had ever reached it.
 
 Two shader pairs are deliberately **shared** by more than one pass, because the
 alternative is two copies of a std140 block or a vertex stride drifting apart —

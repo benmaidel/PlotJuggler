@@ -211,12 +211,17 @@ duplicated per backend. Splitting the remaining six layer types the same way is 
 gates swapping the renderer under the real dock; see `docs/ARCHITECTURE.md` →
 "The layer decode/upload split".
 
-The QRhi/Metal port has its own verification harness: `demos/rhi_view.cpp`
-(`scene3d_rhi_view`) renders one frame headlessly to a PNG and reports coverage and
-tone counts. When a ported pass draws nothing, temporarily returning only that pass
-from `RhiSceneViewWidget::passes()` isolates it — that is what surfaced the marker
-uniform-block bug documented in `docs/ARCHITECTURE.md`. The ported passes have no
-`ctest` coverage yet; an offscreen-QRhi fixture is the open gap.
+The QRhi/Metal port is covered by `tests/rhi_passes_test.cpp`, which renders each
+ported pass through an offscreen QRhi and the production HDR chain + composite. It
+does NOT need OpenGL 4.5, so unlike the `*_gl_test` targets it actually runs on
+macOS/Metal — worth knowing, because a `*_gl_test` there reports **Passed to ctest
+while internally skipping every case** (`GL 4.1 Metal ... below 4.5`), so a green
+suite on macOS says nothing about the OpenGL renderer. Validate GL changes on Linux.
+
+`demos/rhi_view.cpp` (`scene3d_rhi_view`) remains the visual harness: one frame to a
+PNG, with coverage and tone counts. When a pass draws nothing, temporarily returning
+only that pass from `RhiSceneViewWidget::passes()` isolates it — that is what
+surfaced the marker uniform-block bug in `docs/ARCHITECTURE.md`.
 
 # Validation
 

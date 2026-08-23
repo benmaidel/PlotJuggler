@@ -362,6 +362,21 @@ if(PJ_BUILD_TESTS)
   # Real-GL evidence that the sphere-imposter point size is constant under an
   # ORTHOGRAPHIC camera (no 1/depth perspective scaling) yet still shrinks with
   # distance under perspective. Skips below GL 4.5; CI runs it under xvfb + llvmpipe.
+  # Offscreen-QRhi coverage for the ported scene passes. Unlike the *_gl_test
+  # targets it does NOT need OpenGL 4.5, so it actually runs on macOS/Metal — where
+  # the GL-backed tests self-skip — which is the point: it is the only automated
+  # check the QRhi renderer has on its primary development platform.
+  add_executable(rhi_passes_test
+    tests/rhi_passes_test.cpp
+  )
+  target_link_libraries(rhi_passes_test PRIVATE
+    pj_scene3d_widgets
+    Qt6::GuiPrivate
+    GTest::gtest
+  )
+  target_compile_options(rhi_passes_test PRIVATE ${PJ_WARNING_FLAGS} ${PJ_SANITIZER_FLAGS})
+  add_test(NAME rhi_passes_test COMMAND rhi_passes_test)
+
   add_executable(pointcloud_sphere_size_gl_test
     tests/pointcloud_sphere_size_gl_test.cpp
   )
