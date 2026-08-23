@@ -19,6 +19,10 @@ layout(location = 1) out float v_t;
 
 layout(std140, binding = 0) uniform PointcloudUbo {
   mat4 view_proj;
+  // Places the cloud's SOURCE frame into the fixed frame. Point data stays in
+  // sensor coordinates, so without this a cloud in an offset or moving frame draws
+  // at the wrong place and does not track TF.
+  mat4 model;
   // Camera right/up in WORLD space, supplied by the CPU from the view matrix.
   // Expanding the billboard from these avoids passing the view matrix and
   // inverting it per vertex.
@@ -54,8 +58,12 @@ void main() {
   // Camera-facing billboard. This replaces GL_POINTS + gl_PointSize, which has NO
   // equivalent in QRhi (and none on Metal): a vertex shader cannot set point size
   // there, so round "points" have to be real geometry.
+  // Order matters: place the point in world space FIRST, then expand the billboard
+  // there. cam_right/cam_up are world-space, so offsetting before the model
+  // transform would rotate and scale the quad with the sensor frame.
+  const vec3 world = (model * vec4(a_point.xyz, 1.0)).xyz;
   const vec3 offset = ((corner.x * cam_right.xyz) + (corner.y * cam_up.xyz)) * point_radius;
-  gl_Position = view_proj * vec4(a_point.xyz + offset, 1.0);
+  gl_Position = view_proj * vec4(world + offset, 1.0);
 
   v_corner = corner;
   const float span = scalar_max - scalar_min;

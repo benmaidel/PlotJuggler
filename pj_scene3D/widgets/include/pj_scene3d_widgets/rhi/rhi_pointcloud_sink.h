@@ -39,6 +39,13 @@ class RhiPointCloudSink final : public IPointCloudSink {
   void setColormapRange(float min_value, float max_value) override;
   void setSizeMeters(float meters) override;
 
+  /// Places the cloud's SOURCE frame into the fixed frame. Not part of
+  /// IPointCloudSink: the OpenGL pass resolves this itself per frame from the
+  /// FrameContext, whereas the QRhi pass has no TF access, so whoever owns the TF
+  /// buffer has to push it. Must be re-pushed as TF moves, or a cloud in a moving
+  /// frame freezes in place.
+  void setFrameTransform(const glm::mat4& fixed_from_source);
+
   // Accepted and ignored — see the class doc for why each has no counterpart.
   void setShape(PointcloudShape /*shape*/) override {}
   void setSizePixels(float /*pixels*/) override {}

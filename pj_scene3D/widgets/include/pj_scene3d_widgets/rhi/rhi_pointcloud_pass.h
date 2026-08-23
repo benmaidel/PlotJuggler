@@ -6,8 +6,8 @@
 #include <cstdint>
 #include <vector>
 
-#include "pj_widgets/Colormap.h"
 #include "pj_scene3d_widgets/rhi/rhi_render_pass.h"
+#include "pj_widgets/Colormap.h"
 
 namespace pj::scene3d::rhi {
 
@@ -52,17 +52,27 @@ class RhiPointcloudPass final : public IRhiRenderPass {
 
   /// Scalar range mapped across the colormap. An empty range renders flat.
   void setScalarRange(float min_value, float max_value);
-  void setColormap(PJ::Colormap colormap) { colormap_ = colormap; }
+  void setColormap(PJ::Colormap colormap) {
+    colormap_ = colormap;
+  }
   /// World-space radius of each point.
   void setPointRadius(float metres);
+  /// Places the cloud's source frame into the fixed frame. Identity by default,
+  /// which is only correct for data already expressed in the fixed frame.
+  void setModelMatrix(const glm::mat4& model) {
+    model_ = model;
+  }
 
-  [[nodiscard]] int pointCount() const { return point_count_; }
+  [[nodiscard]] int pointCount() const {
+    return point_count_;
+  }
 
  private:
   /// Mirrors the PointcloudUbo block in the shaders. std140: mat4 at 0, the two
   /// vec4s at 64 and 80, then four floats at 96..111 — already a multiple of 16.
   struct alignas(16) PointcloudUbo {
     float view_proj[16];
+    float model[16];
     float cam_right[4];
     float cam_up[4];
     float point_radius;
@@ -70,10 +80,11 @@ class RhiPointcloudPass final : public IRhiRenderPass {
     float scalar_max;
     float colormap_row;
   };
-  static_assert(sizeof(PointcloudUbo) == 112, "PointcloudUbo must match the std140 block layout");
+  static_assert(sizeof(PointcloudUbo) == 176, "PointcloudUbo must match the std140 block layout");
 
   bool ensureColormapTexture(QRhi& rhi, QRhiResourceUpdateBatch& updates);
 
+  glm::mat4 model_{1.0F};
   QRhi* rhi_ = nullptr;
   /// Sample count the current pipeline was built for; a change forces a rebuild.
   int sample_count_ = 1;

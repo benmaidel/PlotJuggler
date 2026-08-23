@@ -117,13 +117,21 @@ because the QRhi view never calls its GL hooks. Inverting that ownership is a la
 step; it is called out here so nobody mistakes it for the intended end state.
 
 **The QRhi pass is not at feature parity, and the adapter is where that shows.**
-Supported: geometry (both interleaved and verbatim-wire), colormap, range, radius,
-visibility. Silently ignored for want of a counterpart: per-point RGB and solid
-colour, point shape, pixel sizing, LUT inversion, and the spatial-axis auto-range —
-so an RGB cloud currently renders through the colormap. Acceptable for a developer
-preview; first thing to fix when bringing the pass up to parity. The GPU AABB
-reduction reports unavailable, which is the documented way for a backend to say "keep
-your CPU bounds scan".
+Supported: geometry (both interleaved and verbatim-wire), the source-frame placement,
+colormap, range, radius, visibility. Silently ignored for want of a counterpart:
+per-point RGB and solid colour, point shape, pixel sizing, LUT inversion, and the
+spatial-axis auto-range — so an RGB cloud currently renders through the colormap.
+Acceptable for a developer preview; first thing to fix when bringing the pass up to
+parity. The GPU AABB reduction reports unavailable, which is the documented way for a
+backend to say "keep your CPU bounds scan".
+
+**TF placement is pushed, not resolved.** `RhiPointCloudSink::setFrameTransform()` is
+deliberately NOT part of `IPointCloudSink`: the OpenGL pass resolves the
+fixed_frame<-source_frame transform itself per frame from its `FrameContext`, whereas
+the QRhi pass has no TF access, so whoever owns the TF buffer must push it and must
+keep pushing it as TF moves. Missing this is not a subtle look difference — cloud
+data stays in raw sensor coordinates, which looks correct exactly when the sensor
+frame happens to sit near the origin, and is wrong everywhere else.
 
 ### Scene3DRhiPreviewDock — what it is for
 

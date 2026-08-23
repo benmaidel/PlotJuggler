@@ -40,7 +40,6 @@ void RhiPointcloudPass::setPoints(const void* data, int count, const Layout& lay
     point_count_ = count;
   }
   points_dirty_ = true;
-
 }
 
 void RhiPointcloudPass::setScalarRange(float min_value, float max_value) {
@@ -87,8 +86,8 @@ bool RhiPointcloudPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd, int
   }
   // Linear across t so the colormap ramp is smooth; nearest across rows so a row
   // never blends into its neighbouring colormap.
-  colormap_sampler_ = rhi.newSampler(QRhiSampler::Linear, QRhiSampler::Nearest, QRhiSampler::None,
-                                     QRhiSampler::ClampToEdge, QRhiSampler::ClampToEdge);
+  colormap_sampler_ = rhi.newSampler(
+      QRhiSampler::Linear, QRhiSampler::Nearest, QRhiSampler::None, QRhiSampler::ClampToEdge, QRhiSampler::ClampToEdge);
   if (!colormap_sampler_->create()) {
     release();
     return false;
@@ -108,8 +107,8 @@ bool RhiPointcloudPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd, int
   srb_->setBindings({
       QRhiShaderResourceBinding::uniformBuffer(
           0, QRhiShaderResourceBinding::VertexStage | QRhiShaderResourceBinding::FragmentStage, ubo_),
-      QRhiShaderResourceBinding::sampledTexture(1, QRhiShaderResourceBinding::FragmentStage, colormap_tex_,
-                                                colormap_sampler_),
+      QRhiShaderResourceBinding::sampledTexture(
+          1, QRhiShaderResourceBinding::FragmentStage, colormap_tex_, colormap_sampler_),
   });
   if (!srb_->create()) {
     release();
@@ -196,6 +195,7 @@ void RhiPointcloudPass::prepare(QRhiResourceUpdateBatch& updates, const RhiFrame
 
   PointcloudUbo ubo{};
   std::memcpy(ubo.view_proj, &vp[0][0], sizeof(ubo.view_proj));
+  std::memcpy(ubo.model, &model_[0][0], sizeof(ubo.model));
   ubo.cam_right[0] = right.x;
   ubo.cam_right[1] = right.y;
   ubo.cam_right[2] = right.z;
@@ -207,10 +207,8 @@ void RhiPointcloudPass::prepare(QRhiResourceUpdateBatch& updates, const RhiFrame
   ubo.scalar_max = scalar_max_;
   // Sample the row's centre: rows are colormap ids, and hitting the centre avoids
   // bleeding into a neighbour even if the sampler is ever switched to linear.
-  ubo.colormap_row =
-      (static_cast<float>(colormap_) + 0.5F) / static_cast<float>(PJ::kColormapCount);
+  ubo.colormap_row = (static_cast<float>(colormap_) + 0.5F) / static_cast<float>(PJ::kColormapCount);
   updates.updateDynamicBuffer(ubo_, 0, sizeof(PointcloudUbo), &ubo);
-
 }
 
 void RhiPointcloudPass::draw(QRhiCommandBuffer& cb, const RhiFrameContext& /*ctx*/) {

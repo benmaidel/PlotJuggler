@@ -100,7 +100,7 @@ class Scene3DRhiPreviewDock : public QWidget, public PJ::IDataWidget {
   /// Point the camera at the TF tree once, the first time frames resolve. Without
   /// it the default orbit pose is nearly edge-on to the ground plane and the scene
   /// reads as an empty grid.
-  void frameSceneOnce(const std::vector<glm::mat4>& triads);
+  void frameSceneOnce(const std::vector<glm::mat4>& triads, const glm::mat4& cloud_world);
   /// Pick a fixed frame: the first root of the TF forest, or the first frame if the
   /// tree has no reachable root. Deliberately not the app's remembered-frame
   /// policy — this dock has no frame picker.

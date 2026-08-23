@@ -84,6 +84,12 @@ void RhiPointCloudSink::setVisible(bool visible) {
   pushRetained();
 }
 
+void RhiPointCloudSink::setFrameTransform(const glm::mat4& fixed_from_source) {
+  if (pass_ != nullptr) {
+    pass_->setModelMatrix(fixed_from_source);
+  }
+}
+
 void RhiPointCloudSink::setColormap(PJ::Colormap cm) {
   if (pass_ != nullptr) {
     pass_->setColormap(cm);

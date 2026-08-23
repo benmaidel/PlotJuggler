@@ -188,6 +188,7 @@ void Scene3DRhiPreviewDock::adoptPointCloudTopic(
     return;
   }
   cloud_layer_->setFixedFrame(QString::fromStdString(fixed_frame_));
+  framed_ = false;  // re-frame now that there is a cloud extent to include
   qCInfo(lcRhiPreview) << "showing point cloud topic" << title;
   view_->update();
 }
@@ -298,16 +299,29 @@ void Scene3DRhiPreviewDock::refreshTf() {
                           << frames.size() << "resolved" << triads.size() << "edges" << (segments.size() / 2);
   }
 
-  frameSceneOnce(triads);
+  glm::mat4 cloud_world(1.0F);
   if (cloud_layer_ != nullptr) {
     cloud_layer_->setFixedFrame(QString::fromStdString(fixed_frame_));
+    // The QRhi cloud pass has no TF access of its own — the OpenGL pass resolves
+    // this from its FrameContext per frame — so the transform has to be pushed from
+    // here, every refresh, or a cloud in a moving frame freezes at its first pose.
+    const std::string source = cloud_layer_->sourceFrame().toStdString();
+    if (!source.empty()) {
+      if (const auto resolved = tf_buffer_->tryLookupTransform(fixed_frame_, source, stamp); resolved.has_value()) {
+        cloud_world = glm::mat4(resolved.value().matrix());
+      }
+    }
+    if (cloud_sink_ != nullptr) {
+      cloud_sink_->setFrameTransform(cloud_world);
+    }
   }
+  frameSceneOnce(triads, cloud_world);
   view_->axisPass().setFrames(std::move(triads));
   view_->tfConnectionsPass().setSegments(std::move(segments));
   view_->update();
 }
 
-void Scene3DRhiPreviewDock::frameSceneOnce(const std::vector<glm::mat4>& triads) {
+void Scene3DRhiPreviewDock::frameSceneOnce(const std::vector<glm::mat4>& triads, const glm::mat4& cloud_world) {
   if (framed_ || triads.empty() || view_->camera() == nullptr) {
     return;
   }
@@ -318,6 +332,22 @@ void Scene3DRhiPreviewDock::frameSceneOnce(const std::vector<glm::mat4>& triads)
     const glm::vec3 origin(t[3]);
     lo = glm::min(lo, origin);
     hi = glm::max(hi, origin);
+  }
+  // Include the cloud's extent. Framing on TF origins alone puts the camera a few
+  // metres out, which a metres-wide cloud then fills entirely. Its bounds are in the
+  // SOURCE frame, so all eight corners go through the frame transform — transforming
+  // just min/max would be wrong under rotation.
+  if (cloud_layer_ != nullptr) {
+    if (const std::optional<AABB> bounds = cloud_layer_->worldBounds(); bounds.has_value() && bounds->valid) {
+      for (int corner = 0; corner < 8; ++corner) {
+        const glm::vec3 local(
+            (corner & 1) != 0 ? bounds->max.x : bounds->min.x, (corner & 2) != 0 ? bounds->max.y : bounds->min.y,
+            (corner & 4) != 0 ? bounds->max.z : bounds->min.z);
+        const glm::vec3 world(cloud_world * glm::vec4(local, 1.0F));
+        lo = glm::min(lo, world);
+        hi = glm::max(hi, world);
+      }
+    }
   }
   const glm::vec3 centre = (lo + hi) * 0.5F;
   // A floor on the radius so a single frame, or a degenerate tree where every
