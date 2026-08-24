@@ -90,6 +90,20 @@ exactly the class of bug QRhi does not report:
 
 ### The layer decode/upload split
 
+**Two seams are needed, not one.** The sink interfaces answer *where decoded output
+goes*. They do not answer *when decoding happens*, and that half used to live inside
+the GL-shaped `render(ViewParams, FrameContext)`: `setTrackerTime()` only marks a
+layer dirty, deliberately, so a fast scrub coalesces many ticks into one decode per
+painted frame. With the pump buried in `render()`, only an OpenGL view could drive a
+layer at all — a non-GL backend saw whatever `attach()` happened to push and nothing
+more. `PointCloudLayer` pushes its first sample at attach, so it *looked* like it
+worked while never advancing; `OccupancyGridLayer` does not, so it drew nothing.
+
+`Scene3DLayer::advance(const FrameContext&)` is that second seam. `FrameContext` is
+just (TF buffer, fixed frame, time) — no GL, no `ViewParams` — so any backend can call
+it. Every `render()` implementation calls it first, leaving the OpenGL path unchanged.
+
+
 **Done: point clouds. Remaining: meshes/URDF, scene entities, occupancy grid, voxel
 grid, poses-in-frame, depth cloud.**
 

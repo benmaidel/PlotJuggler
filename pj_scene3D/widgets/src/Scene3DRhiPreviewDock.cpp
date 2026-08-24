@@ -18,7 +18,10 @@
 #include "pj_runtime/SessionManager.h"
 #include "pj_scene3d_core/camera/camera.h"
 #include "pj_scene3d_core/tf/tf_buffer.h"
+#include "pj_scene3d_widgets/layers/occupancy_grid_layer.h"
 #include "pj_scene3d_widgets/layers/pointcloud_layer.h"
+#include "pj_scene3d_widgets/render_pass.h"  // FrameContext
+#include "pj_scene3d_widgets/rhi/rhi_occupancy_grid_sink.h"
 #include "pj_scene3d_widgets/rhi/rhi_pointcloud_sink.h"
 #include "pj_scene3d_widgets/rhi/rhi_scene_view_widget.h"
 #include "pj_scene3d_widgets/transform_service.h"
@@ -66,6 +69,12 @@ Scene3DRhiPreviewDock::~Scene3DRhiPreviewDock() {
   }
   cloud_layer_.reset();
   cloud_sink_.reset();
+  if (map_layer_ != nullptr) {
+    map_layer_->setSink(nullptr);
+    map_layer_->detach();
+  }
+  map_layer_.reset();
+  map_sink_.reset();
 }
 
 void Scene3DRhiPreviewDock::setTransformService(TransformService* service) {
@@ -107,18 +116,18 @@ void Scene3DRhiPreviewDock::tryAdoptExistingDataset() {
   }
   bindDataset(session_->objectStore().descriptor(topics.front()).dataset_id);
 
-  // Auto-adopt the first point-cloud topic. A drop is the normal route, but layout
-  // restore never drops anything, so without this the preview can only ever show a
-  // cloud interactively — and the headless harness could not verify it at all.
-  if (cloud_layer_ != nullptr) {
-    return;
-  }
+  // Auto-adopt the first cloud and the first map. A drop is the normal route, but
+  // layout restore never drops anything, so without this the preview could only show
+  // them interactively and the headless harness could not verify them at all.
   for (const PJ::ObjectTopicId& topic : topics) {
     const PJ::ObjectTopicDescriptor descriptor = session_->objectStore().descriptor(topic);
     const PJ::sdk::BuiltinObjectType type = PJ::objectTypeFromMetadata(descriptor.metadata_json);
-    if (type == PJ::sdk::BuiltinObjectType::kPointCloud || type == PJ::sdk::BuiltinObjectType::kCompressedPointCloud) {
+    const bool is_cloud =
+        type == PJ::sdk::BuiltinObjectType::kPointCloud || type == PJ::sdk::BuiltinObjectType::kCompressedPointCloud;
+    if (cloud_layer_ == nullptr && is_cloud) {
       adoptPointCloudTopic(topic, type, QString::fromStdString(descriptor.topic_name));
-      return;
+    } else if (map_layer_ == nullptr && type == PJ::sdk::BuiltinObjectType::kOccupancyGrid) {
+      adoptOccupancyTopic(topic, QString::fromStdString(descriptor.topic_name));
     }
   }
 }
@@ -152,6 +161,8 @@ bool Scene3DRhiPreviewDock::tryAcceptObjectTopic(
   if (object_type == PJ::sdk::BuiltinObjectType::kPointCloud ||
       object_type == PJ::sdk::BuiltinObjectType::kCompressedPointCloud) {
     adoptPointCloudTopic(topic_id, object_type, title);
+  } else if (object_type == PJ::sdk::BuiltinObjectType::kOccupancyGrid) {
+    adoptOccupancyTopic(topic_id, title);
   }
   // Other types are accepted anyway, for the dataset id the drop revealed. Keeping
   // the dock is better than having the host replace a working preview because it
@@ -218,6 +229,9 @@ void Scene3DRhiPreviewDock::onTrackerTime(double time) {
   if (cloud_layer_ != nullptr) {
     // The layer defers its decode to the next paint, so this only marks it dirty.
     cloud_layer_->setTrackerTime(PJ::fromRaw(tracker_ns_));
+  }
+  if (map_layer_ != nullptr) {
+    map_layer_->setTrackerTime(PJ::fromRaw(tracker_ns_));
   }
 }
 
@@ -299,6 +313,17 @@ void Scene3DRhiPreviewDock::refreshTf() {
                           << frames.size() << "resolved" << triads.size() << "edges" << (segments.size() / 2);
   }
 
+  // Pump the layers' deferred decode. setTrackerTime only marks them dirty; without
+  // this the OpenGL view would be the only thing able to drive them, and a layer
+  // would sit frozen at whatever attach() happened to push.
+  const FrameContext frame_ctx{*tf_buffer_, fixed_frame_, stamp};
+  if (cloud_layer_ != nullptr) {
+    cloud_layer_->advance(frame_ctx);
+  }
+  if (map_layer_ != nullptr) {
+    map_layer_->advance(frame_ctx);
+  }
+
   glm::mat4 cloud_world(1.0F);
   if (cloud_layer_ != nullptr) {
     cloud_layer_->setFixedFrame(QString::fromStdString(fixed_frame_));
@@ -315,9 +340,53 @@ void Scene3DRhiPreviewDock::refreshTf() {
       cloud_sink_->setFrameTransform(cloud_world);
     }
   }
+  if (map_layer_ != nullptr) {
+    map_layer_->setFixedFrame(QString::fromStdString(fixed_frame_));
+    const std::string map_source = map_layer_->sourceFrame().toStdString();
+    glm::mat4 map_world(1.0F);
+    if (!map_source.empty()) {
+      if (const auto resolved = tf_buffer_->tryLookupTransform(fixed_frame_, map_source, stamp); resolved.has_value()) {
+        map_world = glm::mat4(resolved.value().matrix());
+      }
+    }
+    if (map_sink_ != nullptr) {
+      map_sink_->setFrameTransform(map_world);
+    }
+  }
   frameSceneOnce(triads, cloud_world);
   view_->axisPass().setFrames(std::move(triads));
   view_->tfConnectionsPass().setSegments(std::move(segments));
+  view_->update();
+}
+
+void Scene3DRhiPreviewDock::adoptOccupancyTopic(PJ::ObjectTopicId topic_id, const QString& title) {
+  if (session_ == nullptr || tf_buffer_ == nullptr || view_ == nullptr) {
+    return;
+  }
+  // Tear down in this order: the layer holds a raw pointer to its sink.
+  if (map_layer_ != nullptr) {
+    map_layer_->setSink(nullptr);
+    map_layer_->detach();
+    map_layer_.reset();
+  }
+  map_sink_ = std::make_unique<rhi::RhiOccupancyGridSink>(view_->occupancyGridPass());
+
+  map_layer_ = std::make_unique<OccupancyGridLayer>(topic_id, title);
+  // Routed BEFORE attach so the bootstrap decode lands on the QRhi pass rather than
+  // on the layer's own (inert) OpenGL one.
+  map_layer_->setSink(map_sink_.get());
+
+  Scene3DLayerContext ctx;
+  ctx.session = session_;
+  ctx.tf_buffer = tf_buffer_;
+  if (!map_layer_->attach(ctx)) {
+    qCWarning(lcRhiPreview) << "occupancy grid layer failed to attach for" << title;
+    map_layer_.reset();
+    map_sink_.reset();
+    return;
+  }
+  map_layer_->setFixedFrame(QString::fromStdString(fixed_frame_));
+  qCInfo(lcRhiPreview) << "showing occupancy grid topic" << title;
   view_->update();
 }
 

@@ -431,8 +431,8 @@ void PointCloudLayer::initializeGL() {
   cloud_pass_.initializeGL();
 }
 
-void PointCloudLayer::render(const ViewParams& view_params, const FrameContext& frame_ctx) {
-  // Drain a pending tracker move here (coalesced to one decode per painted frame).
+void PointCloudLayer::advance(const FrameContext& frame_ctx) {
+  // Drain a pending tracker move (coalesced to one decode per painted frame).
   // renderAt's own SampleId guard makes this cheap when the active sample is
   // unchanged. frame_ctx.time and decoded_at_ns_ track the same playhead (the dock
   // paints at the tracker time); refreshNow() re-decodes from the latter on
@@ -441,6 +441,10 @@ void PointCloudLayer::render(const ViewParams& view_params, const FrameContext& 
     tracker_dirty_ = false;
     renderAt(PJ::toRaw(frame_ctx.time));
   }
+}
+
+void PointCloudLayer::render(const ViewParams& view_params, const FrameContext& frame_ctx) {
+  advance(frame_ctx);
   cloud_pass_.render(view_params, frame_ctx);
 }
 

@@ -357,7 +357,7 @@ void OccupancyGridLayer::releaseGL() {
   grid_pass_.releaseGL();
 }
 
-void OccupancyGridLayer::render(const ViewParams& view_params, const FrameContext& frame_ctx) {
+void OccupancyGridLayer::advance(const FrameContext& frame_ctx) {
   if (!visible_) {
     return;
   }
@@ -368,6 +368,13 @@ void OccupancyGridLayer::render(const ViewParams& view_params, const FrameContex
     tracker_dirty_ = false;
     renderAt(PJ::toRaw(frame_ctx.time));
   }
+}
+
+void OccupancyGridLayer::render(const ViewParams& view_params, const FrameContext& frame_ctx) {
+  if (!visible_) {
+    return;
+  }
+  advance(frame_ctx);
   grid_pass_.render(view_params, frame_ctx);
 }
 

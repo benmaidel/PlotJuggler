@@ -81,6 +81,21 @@ class Scene3DLayer : public PJ::ISceneLayer {
   virtual void initializeGL() = 0;
   virtual void render(const ViewParams& view_params, const FrameContext& frame_ctx) = 0;
 
+  // Bring the layer's decoded state up to date with the last setTrackerTime(), and
+  // push the result to whatever sink it is bound to. Backend-agnostic on purpose:
+  // FrameContext is just (TF buffer, fixed frame, time), so this carries no GL and
+  // no ViewParams.
+  //
+  // Why it is separate from render(): setTrackerTime() only marks the layer dirty —
+  // the actual decode is deferred so a fast scrub coalesces many ticks into one
+  // decode per painted frame. That deferred work used to live INSIDE render(), which
+  // meant only an OpenGL view could drive it, and a non-GL backend saw a layer frozen
+  // at whatever attach() happened to push. Every render() implementation calls this
+  // first, so the OpenGL path is unchanged; a non-GL view calls it directly.
+  //
+  // Default is a no-op, for layers whose content does not depend on the tracker.
+  virtual void advance(const FrameContext& /*frame_ctx*/) {}
+
   // Drop the GL resources owned by this layer's render pass(es), returning
   // them to their pre-initializeGL state. Called by SceneViewWidget when the
   // GL context is about to be destroyed (see IRenderPass::releaseGL); the

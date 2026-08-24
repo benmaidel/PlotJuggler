@@ -71,6 +71,7 @@ class PointCloudLayer : public Scene3DLayer {
   void setVisible(bool visible) override;
 
   void initializeGL() override;
+  void advance(const FrameContext& frame_ctx) override;
   void render(const ViewParams& view_params, const FrameContext& frame_ctx) override;
   void releaseGL() override;
   // Source-frame extent of the decoded cloud, recomputed on each decode in

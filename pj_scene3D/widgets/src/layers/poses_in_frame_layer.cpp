@@ -237,7 +237,7 @@ void PosesInFrameLayer::releaseGL() {
   pass_.releaseGL();
 }
 
-void PosesInFrameLayer::render(const ViewParams& view_params, const FrameContext& frame_ctx) {
+void PosesInFrameLayer::advance(const FrameContext& frame_ctx) {
   if (!visible_) {
     return;
   }
@@ -246,6 +246,13 @@ void PosesInFrameLayer::render(const ViewParams& view_params, const FrameContext
     tracker_dirty_ = false;
     renderAt(PJ::toRaw(frame_ctx.time));
   }
+}
+
+void PosesInFrameLayer::render(const ViewParams& view_params, const FrameContext& frame_ctx) {
+  if (!visible_) {
+    return;
+  }
+  advance(frame_ctx);
   if (source_frame_.empty() || instances_.empty()) {
     return;  // nothing decoded yet, or an empty pose set
   }

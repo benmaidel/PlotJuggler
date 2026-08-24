@@ -289,7 +289,7 @@ void VoxelGridLayer::releaseGL() {
   pass_.releaseGL();
 }
 
-void VoxelGridLayer::render(const ViewParams& view_params, const FrameContext& frame_ctx) {
+void VoxelGridLayer::advance(const FrameContext& frame_ctx) {
   if (!visible_) {
     return;
   }
@@ -297,6 +297,13 @@ void VoxelGridLayer::render(const ViewParams& view_params, const FrameContext& f
     tracker_dirty_ = false;
     renderAt(PJ::toRaw(frame_ctx.time));
   }
+}
+
+void VoxelGridLayer::render(const ViewParams& view_params, const FrameContext& frame_ctx) {
+  if (!visible_) {
+    return;
+  }
+  advance(frame_ctx);
   pass_.render(view_params, frame_ctx);
 }
 

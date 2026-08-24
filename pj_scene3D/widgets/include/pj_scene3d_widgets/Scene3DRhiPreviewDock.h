@@ -21,9 +21,11 @@ namespace pj::scene3d {
 class TransformBuffer;
 class TransformService;
 
+class OccupancyGridLayer;
 class PointCloudLayer;
 
 namespace rhi {
+class RhiOccupancyGridSink;
 class RhiPointCloudSink;
 class RhiSceneViewWidget;
 }  // namespace rhi
@@ -43,11 +45,11 @@ class RhiSceneViewWidget;
 /// releaseResources(). Better to find out before building seven layers on top.
 ///
 /// Scope: the TF overlay (axis triads + parent-connection lines), the reference
-/// grid, and ONE point-cloud topic. The cloud is the first use of the
-/// IPointCloudSink seam — a real PointCloudLayer does the decoding and its output is
-/// routed to the QRhi pass through RhiPointCloudSink, so none of that machinery is
-/// reimplemented here. Meshes, markers, maps and voxel grids still need their own
-/// layers split the same way.
+/// grid, one point-cloud topic and one occupancy-grid topic. Both go through their
+/// sink seams — a real PointCloudLayer / OccupancyGridLayer does the decoding and its
+/// output is routed to the matching QRhi pass — so none of that machinery is
+/// reimplemented here. Meshes, markers, poses and voxel grids still need their
+/// adapters written.
 class Scene3DRhiPreviewDock : public QWidget, public PJ::IDataWidget {
   Q_OBJECT
 
@@ -109,12 +111,18 @@ class Scene3DRhiPreviewDock : public QWidget, public PJ::IDataWidget {
   /// Attach a PointCloudLayer for `topic_id` and route it to the QRhi pass. Replaces
   /// any previously attached cloud: the preview shows one at a time.
   void adoptPointCloudTopic(PJ::ObjectTopicId topic_id, PJ::sdk::BuiltinObjectType object_type, const QString& title);
+  /// Attach an OccupancyGridLayer for `topic_id` and route it to the QRhi pass.
+  /// Replaces any previously attached map: the preview shows one at a time.
+  void adoptOccupancyTopic(PJ::ObjectTopicId topic_id, const QString& title);
 
   rhi::RhiSceneViewWidget* view_ = nullptr;
   /// The one point-cloud topic on show, if any, plus the adapter binding it to the
   /// QRhi pass. The sink must outlive the layer, which holds a raw pointer to it.
   std::unique_ptr<rhi::RhiPointCloudSink> cloud_sink_;
   std::unique_ptr<PointCloudLayer> cloud_layer_;
+  /// The one occupancy-grid topic on show, if any. Sink must outlive the layer.
+  std::unique_ptr<rhi::RhiOccupancyGridSink> map_sink_;
+  std::unique_ptr<OccupancyGridLayer> map_layer_;
   TransformService* transform_service_ = nullptr;
   /// Held so a re-bind can drop the previous connection; see setTransformService.
   QMetaObject::Connection tf_ready_conn_;
