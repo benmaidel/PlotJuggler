@@ -113,13 +113,20 @@ clouds, occupancy grids and pose arrays; markers and voxel grids still need thei
 | occupancy grid | `IOccupancyGridSink` | `RhiOccupancyGridSink` | yes, `/map` |
 | pose array | `IPosesSink` | `RhiPosesSink` | yes, `/poses` |
 | depth cloud | reuses `IPointCloudSink` | reuses the cloud one | no topic in the fixture |
-| scene entities | `IMarkerSink` | — | needs `MarkerArray` in the fixture |
+| scene entities | `IMarkerSink` | `RhiMarkerSink` | yes, `/markers` |
 | voxel grid | `IVoxelGridSink` | — | impossible here: no ROS voxel message |
 | robot model | — | — | needs the GL pass reshaped first |
 
 Each verified adapter was checked by FALSIFICATION, not by looking: forcing its frame
 transform to identity must visibly move the content. Placement is the thing that
 looked fine and was wrong once already.
+
+Markers are the one adapter whose placement is not a single transform. A batch's
+primitives are frame-local against an interned frame TABLE, so each entry resolves
+independently and a batch can legitimately be only PARTLY resolvable —
+`RhiMarkerSink` therefore exposes the frame names it is waiting on and takes back a
+vector of optionals, where `nullopt` means "skip those primitives" rather than "draw
+them at the origin".
 
 The split point is not arbitrary — `PointCloudLayer`'s own header already named it:
 `pushCloud()` is *"the single point where a cloud reaches the GPU"*. Everything above

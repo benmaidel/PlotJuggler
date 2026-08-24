@@ -16,6 +16,9 @@ and a colour image — so a screenshot is a meaningful visual check:
   ``/points`` ``sensor_msgs/msg/PointCloud2``  a 2000-point spiral shell in the
               ``sensor`` frame, 5 Hz for 5 s. Fields are x/y/z/intensity, all
               FLOAT32 (``PointField.datatype == 7``), ``point_step`` 16.
+  ``/markers`` ``visualization_msgs/msg/MarkerArray``  a cube, a sphere and a line
+              strip in ``base_link``, 5 Hz for 5 s — three primitive families at
+              once, each a different colour and size.
   ``/poses``  ``foxglove_msgs/msg/PosesInFrame``  a 12-pose fan in the ``sensor``
               frame, 10 Hz for 5 s. ``sensor`` circles AND spins, so ignoring the
               frame transform leaves the fan at the origin and ignoring its rotation
@@ -180,6 +183,68 @@ float64 x
 float64 y
 float64 z
 float64 w
+"""
+
+#: Deliberately the ROS 2 Humble-era definition, with NO ``uv_coordinates`` and no
+#: ``mesh_file``. The parser decides whether to expect those optional tail blocks by
+#: searching THIS TEXT for those field names, so adding them here without also
+#: encoding them would desynchronise every marker after the first.
+SCHEMA_MARKER_ARRAY = b"""Marker[] markers
+================================================================================
+MSG: visualization_msgs/Marker
+std_msgs/Header header
+string ns
+int32 id
+int32 type
+int32 action
+geometry_msgs/Pose pose
+geometry_msgs/Vector3 scale
+std_msgs/ColorRGBA color
+builtin_interfaces/Duration lifetime
+bool frame_locked
+geometry_msgs/Point[] points
+std_msgs/ColorRGBA[] colors
+string text
+string mesh_resource
+bool mesh_use_embedded_materials
+================================================================================
+MSG: std_msgs/Header
+builtin_interfaces/Time stamp
+string frame_id
+================================================================================
+MSG: builtin_interfaces/Time
+int32 sec
+uint32 nanosec
+================================================================================
+MSG: builtin_interfaces/Duration
+int32 sec
+uint32 nanosec
+================================================================================
+MSG: geometry_msgs/Pose
+Point position
+Quaternion orientation
+================================================================================
+MSG: geometry_msgs/Point
+float64 x
+float64 y
+float64 z
+================================================================================
+MSG: geometry_msgs/Quaternion
+float64 x
+float64 y
+float64 z
+float64 w
+================================================================================
+MSG: geometry_msgs/Vector3
+float64 x
+float64 y
+float64 z
+================================================================================
+MSG: std_msgs/ColorRGBA
+float32 r
+float32 g
+float32 b
+float32 a
 """
 
 SCHEMA_POSES_IN_FRAME = b"""builtin_interfaces/Time timestamp
@@ -401,6 +466,76 @@ MARKER_COLOR = (255, 128, 0)  # orange
 DIAGONAL_HALF_WIDTH = 5
 #: Side (px) of the filled square anchored in the BOTTOM-LEFT corner.
 CORNER_SQUARE = 48
+
+
+#: Published in ``base_link`` — moving and yawing, so misplacement is visible.
+MARKERS_FRAME_ID = "base_link"
+#: visualization_msgs/Marker.type
+MARKER_TYPE_CUBE = 1
+MARKER_TYPE_SPHERE = 2
+MARKER_TYPE_LINE_STRIP = 4
+
+
+def _write_marker(
+    cdr: CdrWriter,
+    stamp_ns: int,
+    frame_id: str,
+    marker_id: int,
+    marker_type: int,
+    position: tuple[float, float, float],
+    scale: tuple[float, float, float],
+    color: tuple[float, float, float, float],
+    points: list[tuple[float, float, float]],
+) -> None:
+    """One visualization_msgs/Marker, in the field order the .msg declares.
+
+    Every field is written even when unused (empty strings, zero-length sequences):
+    a MarkerArray is a flat sequence, so skipping one leaves every LATER marker
+    misaligned rather than failing loudly on this one.
+    """
+    write_header(cdr, stamp_ns, frame_id)
+    cdr.string("fixture")
+    cdr.int32(marker_id)
+    cdr.int32(marker_type)
+    cdr.int32(0)  # action ADD
+    for component in position:
+        cdr.float64(component)
+    for component in (0.0, 0.0, 0.0, 1.0):  # identity orientation
+        cdr.float64(component)
+    for component in scale:
+        cdr.float64(component)
+    for component in color:
+        cdr.float32(component)
+    cdr.int32(0)  # lifetime.sec
+    cdr.uint32(0)  # lifetime.nanosec
+    cdr.boolean(False)  # frame_locked
+    cdr.sequence_length(len(points))
+    for point in points:
+        for component in point:
+            cdr.float64(component)
+    cdr.sequence_length(0)  # colors[]
+    cdr.string("")  # text
+    cdr.string("")  # mesh_resource
+    cdr.boolean(False)  # mesh_use_embedded_materials
+
+
+def marker_array_message(stamp_ns: int, frame_id: str) -> bytes:
+    """A cube, a sphere and a line strip — three primitive families at once, each a
+    different colour and size so a swapped id or a dropped marker is obvious."""
+    cdr = CdrWriter()
+    cdr.sequence_length(3)
+    _write_marker(cdr, stamp_ns, frame_id, 0, MARKER_TYPE_CUBE, (0.9, 0.0, 0.35),
+                  (0.5, 0.5, 0.7), (0.95, 0.35, 0.15, 1.0), [])
+    _write_marker(cdr, stamp_ns, frame_id, 1, MARKER_TYPE_SPHERE, (-0.9, 0.0, 0.35),
+                  (0.6, 0.4, 0.4), (0.25, 0.55, 0.95, 1.0), [])
+    # Offset well clear of the other content: a line is 1 px wide (Metal has no
+    # wide-line primitive, and a core-profile GL context rejects glLineWidth > 1), so
+    # a strip drawn through the middle of a dense point cloud is invisible even when
+    # it renders correctly.
+    strip = [(1.7, -1.2 + 0.3 * index, 0.15 + 0.05 * index) for index in range(9)]
+    _write_marker(cdr, stamp_ns, frame_id, 2, MARKER_TYPE_LINE_STRIP, (0.0, 0.0, 0.0),
+                  (0.04, 0.0, 0.0), (0.15, 0.75, 0.3, 1.0), strip)
+    return cdr.bytes()
 
 
 POSES_COUNT = 12
@@ -682,6 +817,7 @@ def generate(path: Path, include_image: bool = True) -> None:
     cloud_hz = 5.0
     image_hz = 10.0
     poses_hz = 10.0
+    markers_hz = 5.0
     # The map is static content published slowly, as a real map server does.
     occupancy_hz = 1.0
     point_count = 2000
@@ -703,6 +839,13 @@ def generate(path: Path, include_image: bool = True) -> None:
         )
         cloud_channel = writer.register_channel(
             topic="/points", message_encoding="cdr", schema_id=cloud_schema
+        )
+
+        markers_schema = writer.register_schema(
+            name="visualization_msgs/msg/MarkerArray", encoding="ros2msg", data=SCHEMA_MARKER_ARRAY
+        )
+        markers_channel = writer.register_channel(
+            topic="/markers", message_encoding="cdr", schema_id=markers_schema
         )
 
         poses_schema = writer.register_schema(
@@ -755,6 +898,16 @@ def generate(path: Path, include_image: bool = True) -> None:
                 ),
             )
 
+        markers_count = int(duration_s * markers_hz)
+        for index in range(markers_count):
+            stamp_ns = int(index / markers_hz * 1e9)
+            writer.add_message(
+                channel_id=markers_channel,
+                log_time=stamp_ns,
+                publish_time=stamp_ns,
+                data=marker_array_message(stamp_ns, MARKERS_FRAME_ID),
+            )
+
         poses_count = int(duration_s * poses_hz)
         for index in range(poses_count):
             stamp_ns = int(index / poses_hz * 1e9)
@@ -803,6 +956,7 @@ def generate(path: Path, include_image: bool = True) -> None:
         writer.finish()
 
     summary = f"{tf_count} /tf msgs, {cloud_count} /points msgs x {point_count} points"
+    summary += f", {markers_count} /markers msgs x3 in {MARKERS_FRAME_ID}"
     summary += f", {poses_count} /poses msgs x {POSES_COUNT} in {POSES_FRAME_ID}"
     summary += f", {occupancy_count} /map msgs {OCCUPANCY_WIDTH}x{OCCUPANCY_HEIGHT} in {OCCUPANCY_FRAME_ID}"
     if image_count:

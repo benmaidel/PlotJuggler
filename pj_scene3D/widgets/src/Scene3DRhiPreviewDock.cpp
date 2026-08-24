@@ -21,7 +21,9 @@
 #include "pj_scene3d_widgets/layers/occupancy_grid_layer.h"
 #include "pj_scene3d_widgets/layers/pointcloud_layer.h"
 #include "pj_scene3d_widgets/layers/poses_in_frame_layer.h"
+#include "pj_scene3d_widgets/layers/scene_entities_layer.h"
 #include "pj_scene3d_widgets/render_pass.h"  // FrameContext
+#include "pj_scene3d_widgets/rhi/rhi_marker_sink.h"
 #include "pj_scene3d_widgets/rhi/rhi_occupancy_grid_sink.h"
 #include "pj_scene3d_widgets/rhi/rhi_pointcloud_sink.h"
 #include "pj_scene3d_widgets/rhi/rhi_poses_sink.h"
@@ -83,6 +85,12 @@ Scene3DRhiPreviewDock::~Scene3DRhiPreviewDock() {
   }
   poses_layer_.reset();
   poses_sink_.reset();
+  if (marker_layer_ != nullptr) {
+    marker_layer_->setSink(nullptr);
+    marker_layer_->detach();
+  }
+  marker_layer_.reset();
+  marker_sink_.reset();
 }
 
 void Scene3DRhiPreviewDock::setTransformService(TransformService* service) {
@@ -138,6 +146,8 @@ void Scene3DRhiPreviewDock::tryAdoptExistingDataset() {
       adoptOccupancyTopic(topic, QString::fromStdString(descriptor.topic_name));
     } else if (poses_layer_ == nullptr && type == PJ::sdk::BuiltinObjectType::kPosesInFrame) {
       adoptPosesTopic(topic, QString::fromStdString(descriptor.topic_name));
+    } else if (marker_layer_ == nullptr && type == PJ::sdk::BuiltinObjectType::kSceneEntities) {
+      adoptMarkerTopic(topic, QString::fromStdString(descriptor.topic_name));
     }
   }
 }
@@ -175,6 +185,8 @@ bool Scene3DRhiPreviewDock::tryAcceptObjectTopic(
     adoptOccupancyTopic(topic_id, title);
   } else if (object_type == PJ::sdk::BuiltinObjectType::kPosesInFrame) {
     adoptPosesTopic(topic_id, title);
+  } else if (object_type == PJ::sdk::BuiltinObjectType::kSceneEntities) {
+    adoptMarkerTopic(topic_id, title);
   }
   // Other types are accepted anyway, for the dataset id the drop revealed. Keeping
   // the dock is better than having the host replace a working preview because it
@@ -247,6 +259,9 @@ void Scene3DRhiPreviewDock::onTrackerTime(double time) {
   }
   if (poses_layer_ != nullptr) {
     poses_layer_->setTrackerTime(PJ::fromRaw(tracker_ns_));
+  }
+  if (marker_layer_ != nullptr) {
+    marker_layer_->setTrackerTime(PJ::fromRaw(tracker_ns_));
   }
 }
 
@@ -341,6 +356,9 @@ void Scene3DRhiPreviewDock::refreshTf() {
   if (poses_layer_ != nullptr) {
     poses_layer_->advance(frame_ctx);
   }
+  if (marker_layer_ != nullptr) {
+    marker_layer_->advance(frame_ctx);
+  }
 
   glm::mat4 cloud_world(1.0F);
   if (cloud_layer_ != nullptr) {
@@ -384,6 +402,21 @@ void Scene3DRhiPreviewDock::refreshTf() {
     if (poses_sink_ != nullptr) {
       poses_sink_->setFrameTransform(poses_world);
     }
+  }
+  if (marker_layer_ != nullptr && marker_sink_ != nullptr) {
+    marker_layer_->setFixedFrame(QString::fromStdString(fixed_frame_));
+    // A marker batch is placed by a TABLE of frames, not one transform. Each entry
+    // resolves independently, and nullopt is meaningful: the pass skips those
+    // primitives rather than drawing them at the origin.
+    const std::vector<std::string> names = marker_sink_->frameNames();
+    std::vector<std::optional<glm::mat4>> transforms;
+    transforms.reserve(names.size());
+    for (const std::string& name : names) {
+      const auto resolved = tf_buffer_->tryLookupTransform(fixed_frame_, name, stamp);
+      transforms.push_back(
+          resolved.has_value() ? std::optional<glm::mat4>(glm::mat4(resolved.value().matrix())) : std::nullopt);
+    }
+    marker_sink_->setFrameTransforms(std::move(transforms));
   }
   frameSceneOnce(triads, cloud_world);
   view_->axisPass().setFrames(std::move(triads));
@@ -447,6 +480,34 @@ void Scene3DRhiPreviewDock::adoptPosesTopic(PJ::ObjectTopicId topic_id, const QS
   }
   poses_layer_->setFixedFrame(QString::fromStdString(fixed_frame_));
   qCInfo(lcRhiPreview) << "showing pose array topic" << title;
+  view_->update();
+}
+
+void Scene3DRhiPreviewDock::adoptMarkerTopic(PJ::ObjectTopicId topic_id, const QString& title) {
+  if (session_ == nullptr || tf_buffer_ == nullptr || view_ == nullptr) {
+    return;
+  }
+  if (marker_layer_ != nullptr) {
+    marker_layer_->setSink(nullptr);
+    marker_layer_->detach();
+    marker_layer_.reset();
+  }
+  marker_sink_ = std::make_unique<rhi::RhiMarkerSink>(view_->markerPass());
+
+  marker_layer_ = std::make_unique<SceneEntitiesLayer>(topic_id, title);
+  marker_layer_->setSink(marker_sink_.get());
+
+  Scene3DLayerContext ctx;
+  ctx.session = session_;
+  ctx.tf_buffer = tf_buffer_;
+  if (!marker_layer_->attach(ctx)) {
+    qCWarning(lcRhiPreview) << "scene entities layer failed to attach for" << title;
+    marker_layer_.reset();
+    marker_sink_.reset();
+    return;
+  }
+  marker_layer_->setFixedFrame(QString::fromStdString(fixed_frame_));
+  qCInfo(lcRhiPreview) << "showing marker topic" << title;
   view_->update();
 }
 

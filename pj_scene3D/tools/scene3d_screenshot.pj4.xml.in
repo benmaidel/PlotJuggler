@@ -47,6 +47,8 @@
                    object_type="kOccupancyGrid" display_name="/map" visible="true"/>
             <layer dataset_id="1" dataset_source="@DATASET_SOURCE@" topic_name="/poses"
                    object_type="kPosesInFrame" display_name="/poses" visible="true"/>
+            <layer dataset_id="1" dataset_source="@DATASET_SOURCE@" topic_name="/markers"
+                   object_type="kSceneEntities" display_name="/markers" visible="true"/>
           </scene3d>
         </DockArea>
       </Container>
@@ -55,7 +57,7 @@
   </tabbed_widget>
   <previouslyLoaded_Datafiles>
     <fileInfo filename="@MCAP_PATH@" prefix="" display_offset_ns="0" timeline_order="0">
-      <plugin ID="MCAP Loader"><![CDATA[{"filepath":"@MCAP_PATH@","max_array_size":500,"clamp_large_arrays":true,"use_log_time":false,"use_header_timestamp":false,"selected_topics":["/tf","/points","/map","/poses"]}]]></plugin>
+      <plugin ID="MCAP Loader"><![CDATA[{"filepath":"@MCAP_PATH@","max_array_size":500,"clamp_large_arrays":true,"use_log_time":false,"use_header_timestamp":false,"selected_topics":["/tf","/points","/map","/poses","/markers"]}]]></plugin>
     </fileInfo>
   </previouslyLoaded_Datafiles>
 </root>
