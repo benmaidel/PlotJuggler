@@ -43,6 +43,8 @@
                           object_type="kFrameTransforms"/>
             <layer dataset_id="1" dataset_source="@DATASET_SOURCE@" topic_name="/points"
                    object_type="kPointCloud" display_name="/points" visible="true"/>
+            <layer dataset_id="1" dataset_source="@DATASET_SOURCE@" topic_name="/map"
+                   object_type="kOccupancyGrid" display_name="/map" visible="true"/>
           </scene3d>
         </DockArea>
       </Container>
@@ -51,7 +53,7 @@
   </tabbed_widget>
   <previouslyLoaded_Datafiles>
     <fileInfo filename="@MCAP_PATH@" prefix="" display_offset_ns="0" timeline_order="0">
-      <plugin ID="MCAP Loader"><![CDATA[{"filepath":"@MCAP_PATH@","max_array_size":500,"clamp_large_arrays":true,"use_log_time":false,"use_header_timestamp":false,"selected_topics":["/tf","/points"]}]]></plugin>
+      <plugin ID="MCAP Loader"><![CDATA[{"filepath":"@MCAP_PATH@","max_array_size":500,"clamp_large_arrays":true,"use_log_time":false,"use_header_timestamp":false,"selected_topics":["/tf","/points","/map"]}]]></plugin>
     </fileInfo>
   </previouslyLoaded_Datafiles>
 </root>

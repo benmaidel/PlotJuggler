@@ -16,6 +16,11 @@ and a colour image — so a screenshot is a meaningful visual check:
   ``/points`` ``sensor_msgs/msg/PointCloud2``  a 2000-point spiral shell in the
               ``sensor`` frame, 5 Hz for 5 s. Fields are x/y/z/intensity, all
               FLOAT32 (``PointField.datatype == 7``), ``point_step`` 16.
+  ``/map``    ``nav_msgs/msg/OccupancyGrid``   a 40x40 asymmetric costmap at 0.1 m,
+              1 Hz for 5 s, published in ``base_link`` — deliberately NOT the fixed
+              frame, so a renderer that ignores the fixed_frame<-source_frame
+              transform visibly draws it at the world origin instead of under the
+              moving robot.
   ``/image``  ``sensor_msgs/msg/Image``       a 320x240 ``rgb8`` test card,
               10 Hz for 5 s. Suppress it with ``--no-image``.
 
@@ -162,6 +167,41 @@ Vector3 translation
 Quaternion rotation
 ================================================================================
 MSG: geometry_msgs/Vector3
+float64 x
+float64 y
+float64 z
+================================================================================
+MSG: geometry_msgs/Quaternion
+float64 x
+float64 y
+float64 z
+float64 w
+"""
+
+SCHEMA_OCCUPANCY_GRID = b"""std_msgs/Header header
+MapMetaData info
+int8[] data
+================================================================================
+MSG: std_msgs/Header
+builtin_interfaces/Time stamp
+string frame_id
+================================================================================
+MSG: builtin_interfaces/Time
+int32 sec
+uint32 nanosec
+================================================================================
+MSG: nav_msgs/MapMetaData
+builtin_interfaces/Time map_load_time
+float32 resolution
+uint32 width
+uint32 height
+geometry_msgs/Pose origin
+================================================================================
+MSG: geometry_msgs/Pose
+Point position
+Quaternion orientation
+================================================================================
+MSG: geometry_msgs/Point
 float64 x
 float64 y
 float64 z
@@ -333,6 +373,67 @@ MARKER_COLOR = (255, 128, 0)  # orange
 DIAGONAL_HALF_WIDTH = 5
 #: Side (px) of the filled square anchored in the BOTTOM-LEFT corner.
 CORNER_SQUARE = 48
+
+
+OCCUPANCY_WIDTH = 40
+OCCUPANCY_HEIGHT = 40
+OCCUPANCY_RESOLUTION = 0.1
+#: The map is published in ``base_link``, NOT the fixed frame. That is deliberate:
+#: base_link circles the origin while yawing, so a renderer that ignores the
+#: fixed_frame<-source_frame transform draws the map at the world origin instead of
+#: under the moving robot — a placement bug that is invisible when every topic
+#: happens to be published in the fixed frame.
+OCCUPANCY_FRAME_ID = "base_link"
+
+
+def occupancy_cells(width: int, height: int) -> bytes:
+    """An ASYMMETRIC costmap: free interior, an occupied L along two edges, a lethal
+    blob off-centre, and an unknown (-1) border.
+
+    Asymmetry is the point, exactly as for the image test card: a symmetric map
+    cannot distinguish a correct render from one mirrored or transposed.
+    """
+    cells = bytearray(width * height)
+    for row in range(height):
+        for col in range(width):
+            value = 0  # free
+            if row < 2 or col < 2 or row >= height - 2 or col >= width - 2:
+                value = -1  # unknown border
+            elif row == 8 and 6 <= col < width - 10:
+                value = 100  # long occupied wall
+            elif col == 6 and 8 <= row < height - 12:
+                value = 100  # the L's short leg
+            else:
+                dx = col - 27
+                dy = row - 26
+                if dx * dx + dy * dy < 16:
+                    value = 100  # lethal blob, off-centre
+            cells[row * width + col] = value & 0xFF
+    return bytes(cells)
+
+
+def occupancy_grid_message(stamp_ns: int, frame_id: str, width: int, height: int, cells: bytes) -> bytes:
+    """nav_msgs/msg/OccupancyGrid. Field order per the .msg: header, info, data.
+
+    The origin places the map's lower-front-left CORNER, so it is offset by half the
+    map extent to centre the map on the frame it is published in.
+    """
+    cdr = CdrWriter()
+    write_header(cdr, stamp_ns, frame_id)
+    # info.map_load_time — the grid uses the header stamp, so zero is fine.
+    cdr.int32(0)
+    cdr.uint32(0)
+    cdr.float32(OCCUPANCY_RESOLUTION)
+    cdr.uint32(width)
+    cdr.uint32(height)
+    half_w = 0.5 * width * OCCUPANCY_RESOLUTION
+    half_h = 0.5 * height * OCCUPANCY_RESOLUTION
+    for component in (-half_w, -half_h, 0.0):
+        cdr.float64(component)
+    for component in (0.0, 0.0, 0.0, 1.0):  # identity orientation
+        cdr.float64(component)
+    cdr.uint8_sequence(cells)
+    return cdr.bytes()
 
 
 def image_test_card(width: int = IMAGE_WIDTH, height: int = IMAGE_HEIGHT) -> bytes:
@@ -517,6 +618,8 @@ def generate(path: Path, include_image: bool = True) -> None:
     tf_hz = 20.0
     cloud_hz = 5.0
     image_hz = 10.0
+    # The map is static content published slowly, as a real map server does.
+    occupancy_hz = 1.0
     point_count = 2000
 
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -536,6 +639,13 @@ def generate(path: Path, include_image: bool = True) -> None:
         )
         cloud_channel = writer.register_channel(
             topic="/points", message_encoding="cdr", schema_id=cloud_schema
+        )
+
+        occupancy_schema = writer.register_schema(
+            name="nav_msgs/msg/OccupancyGrid", encoding="ros2msg", data=SCHEMA_OCCUPANCY_GRID
+        )
+        occupancy_channel = writer.register_channel(
+            topic="/map", message_encoding="cdr", schema_id=occupancy_schema
         )
 
         image_channel = None
@@ -574,6 +684,25 @@ def generate(path: Path, include_image: bool = True) -> None:
                 ),
             )
 
+        # One shared payload: the map is static, and what it exercises is PLACEMENT in
+        # a non-fixed frame, which the moving base_link already varies for us.
+        occupancy_payload = occupancy_cells(OCCUPANCY_WIDTH, OCCUPANCY_HEIGHT)
+        occupancy_count = int(duration_s * occupancy_hz)
+        for index in range(occupancy_count):
+            stamp_ns = int(index / occupancy_hz * 1e9)
+            writer.add_message(
+                channel_id=occupancy_channel,
+                log_time=stamp_ns,
+                publish_time=stamp_ns,
+                data=occupancy_grid_message(
+                    stamp_ns,
+                    OCCUPANCY_FRAME_ID,
+                    OCCUPANCY_WIDTH,
+                    OCCUPANCY_HEIGHT,
+                    occupancy_payload,
+                ),
+            )
+
         image_count = 0
         if image_channel is not None:
             # One shared payload for every frame: the pattern is time-invariant by
@@ -593,6 +722,7 @@ def generate(path: Path, include_image: bool = True) -> None:
         writer.finish()
 
     summary = f"{tf_count} /tf msgs, {cloud_count} /points msgs x {point_count} points"
+    summary += f", {occupancy_count} /map msgs {OCCUPANCY_WIDTH}x{OCCUPANCY_HEIGHT} in {OCCUPANCY_FRAME_ID}"
     if image_count:
         summary += f", {image_count} /image msgs {IMAGE_WIDTH}x{IMAGE_HEIGHT} {IMAGE_ENCODING}"
     print(f"[OK] {path} — {path.stat().st_size} bytes, {summary}")

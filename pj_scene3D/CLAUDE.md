@@ -188,9 +188,17 @@ full mechanism.
   headless visual-verification harness:
   `screenshot_3d.sh` launches `plotjuggler4` with a canned layout that opens a 3D
   dock over a synthetic MCAP (`generate_scene3d_fixture.py` writes `/tf` +
-  `/points` + an `/image` test card, ROS 2 CDR; `--no-image` drops the card and
-  `--verify` re-decodes it with an independent CDR reader), then grabs the first
-  `SceneViewWidget` framebuffer to a PNG via the app's own `--screenshot`. That
+  `/points` + `/map` + an `/image` test card, ROS 2 CDR; `--no-image` drops the card
+  and `--verify` re-decodes it with an independent CDR reader), then grabs the first
+  `SceneViewWidget` framebuffer to a PNG via the app's own `--screenshot`.
+  **Adding a topic takes THREE edits, not one** — the generator, the layout's
+  `<layer>`/`<config_topic>` element, AND the data-source plugin config's
+  `selected_topics` list, which gates what is loaded at all. Miss the last and the
+  topic is silently absent with no warning anywhere.
+  Fixture topics are deliberately published in frames that are NOT the fixed frame
+  (`/points` in `sensor`, `/map` in `base_link`, both of which move), so a renderer
+  that drops the fixed_frame<-source_frame transform misplaces them visibly instead
+  of looking fine at the origin. That
   ONE generator also feeds the sibling 2D harness (`pj_scene2D/tools/screenshot_2d.sh`),
   whose layout simply selects `/image` instead of `/tf` + `/points` — keep the
   generator's topic set a superset of both harnesses' needs. Its value is as the repeatable
