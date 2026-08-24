@@ -129,9 +129,16 @@ backend to say "keep your CPU bounds scan".
 deliberately NOT part of `IPointCloudSink`: the OpenGL pass resolves the
 fixed_frame<-source_frame transform itself per frame from its `FrameContext`, whereas
 the QRhi pass has no TF access, so whoever owns the TF buffer must push it and must
-keep pushing it as TF moves. Missing this is not a subtle look difference — cloud
-data stays in raw sensor coordinates, which looks correct exactly when the sensor
-frame happens to sit near the origin, and is wrong everywhere else.
+keep pushing it as TF moves. Every frame-placed layer ported after this one inherits
+the same asymmetry.
+
+This shipped broken once, and the reason is worth recording because it was NOT a weak
+fixture — the fixture's `sensor` frame is a full 2 m from the origin, circling and
+spinning. The cloud was rendering 2 m out of place, plainly visible in the harness
+screenshot, and it was missed because the check was "is a cloud present" rather than
+"is it centred on the sensor triad". Presence is the cheap thing to look at and the
+one that proves least. `PointCloudHonoursItsModelMatrix` in `rhi_passes_test` now
+asserts placement mechanically, which is what should have been guarding it.
 
 ### Scene3DRhiPreviewDock — what it is for
 

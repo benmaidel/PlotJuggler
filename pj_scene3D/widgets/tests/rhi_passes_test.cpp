@@ -330,6 +330,62 @@ TEST_F(RhiPassesTest, PointCloudAppliesColormapAcrossItsRange) {
   EXPECT_GE(hues.size(), 4U) << "a 0..1 turbo ramp should span several hues, not one flat colour";
 }
 
+// The model matrix must actually place the cloud. Without it the pass draws in raw
+// SOURCE-frame coordinates, which looks correct exactly when the source frame sits
+// near the origin — the shape the test fixture happens to have, and the reason this
+// shipped broken once already. Asserting that a translation MOVES the rendered
+// centroid is what makes that falsifiable.
+TEST_F(RhiPassesTest, PointCloudHonoursItsModelMatrix) {
+  struct Point {
+    float x;
+    float y;
+    float z;
+    float scalar;
+  };
+  std::vector<Point> points;
+  for (int i = 0; i < 200; ++i) {
+    const float t = static_cast<float>(i) / 199.0F;
+    points.push_back(Point{-0.3F + (0.6F * t), 0.0F, 0.4F, t});
+  }
+
+  const auto centroidX = [](const QImage& img) {
+    double sum = 0.0;
+    double weight = 0.0;
+    for (int y = 0; y < img.height(); ++y) {
+      for (int x = 0; x < img.width(); ++x) {
+        const QColor c = img.pixelColor(x, y);
+        if (std::max({c.red(), c.green(), c.blue()}) - std::min({c.red(), c.green(), c.blue()}) >= 60) {
+          sum += x;
+          weight += 1.0;
+        }
+      }
+    }
+    return weight > 0.0 ? sum / weight : -1.0;
+  };
+
+  RhiPointcloudPass cloud;
+  cloud.setPoints(points.data(), static_cast<int>(points.size()), RhiPointcloudPass::Layout{});
+  cloud.setScalarRange(0.0F, 1.0F);
+  cloud.setPointRadius(0.05F);
+
+  cloud.setModelMatrix(glm::mat4(1.0F));
+  const QImage identity = harness_.render({&cloud}, makeContext());
+  ASSERT_FALSE(identity.isNull());
+  const double centre_identity = centroidX(identity);
+  ASSERT_GT(centre_identity, 0.0) << "the cloud drew nothing at identity";
+
+  // A metre of +Y in world space; the reference camera looks along -Y-ish, so this
+  // shifts the projection sideways by far more than any antialiasing wobble.
+  cloud.setModelMatrix(glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 1.0F, 0.0F)));
+  const QImage shifted = harness_.render({&cloud}, makeContext());
+  ASSERT_FALSE(shifted.isNull());
+  const double centre_shifted = centroidX(shifted);
+  ASSERT_GT(centre_shifted, 0.0) << "the cloud drew nothing when translated";
+
+  EXPECT_GT(std::abs(centre_shifted - centre_identity), 10.0)
+      << "the model matrix did not move the cloud: source-frame placement is being ignored";
+}
+
 // --- Smoke coverage for the remaining passes -------------------------------
 //
 // Deliberately shallow: each asserts only that the pass DRAWS. That is not
