@@ -175,6 +175,44 @@ screenshot, and it was missed because the check was "is a cloud present" rather 
 one that proves least. `PointCloudHonoursItsModelMatrix` in `rhi_passes_test` now
 asserts placement mechanically, which is what should have been guarding it.
 
+### Audit: what else is backend-specific?
+
+Done by reading every virtual on `ISceneLayer`/`Scene3DLayer` and every layer
+responsibility the OpenGL view and the dock consume, after `advance()` was found the
+hard way. The conclusion is narrower than expected, and worth recording so the next
+person does not re-derive it.
+
+**At the LAYER level there is nothing else hiding.** Only four virtuals are
+backend-specific, and all four genuinely draw or own render-context objects:
+`initializeGL()`, `releaseGL()`, `render()`, `renderShadowCasters()`. Everything else
+— `info`, `timeRange`, `attach`/`detach`, `setTrackerTime`, `setVisible`,
+`setFixedFrame`, `createConfigWidget`, the XML state, `fallbackFrames`,
+`sourceFrame`, `statusWarning`, `worldBounds`, `meshShadowBounds` and `renderKey` —
+is already backend-agnostic.
+
+That includes two this document previously listed as candidate seams. `worldBounds()`
+(scene extent, which the dock unions and feeds to the camera) and `renderKey()` (the
+per-tick repaint gate) are plain const methods available to any backend. They are not
+missing seams; the PREVIEW simply does not consume them, doing its own ad-hoc camera
+framing and repainting unconditionally. An unconsumed responsibility is a much smaller
+problem than a missing one.
+
+**The remaining gap is the VIEW's API surface, not the layer contract.** Thirteen
+responsibilities `Scene3DDockWidget` drives on `SceneViewWidget` have no counterpart
+on `RhiSceneViewWidget`:
+
+| Group | Missing on the QRhi view |
+|---|---|
+| scene extent | `setSceneBounds` (adaptive near/far + framing) |
+| TF / time | `setTransformBuffer`, `setTrackerTime`, `setFixedFrame`, `setFollowFrame`, `applyFollow` |
+| repaint gating | `tfRenderKey`, `followRenderKey` |
+| look knobs | grid visibility/style/extent/divisions, `axesVisible`, gizmo size/opacity, `tfConnectionsVisible`, `meshShadingParams` |
+
+So wiring the real dock to the QRhi renderer is a bounded, enumerable job — roughly
+these thirteen — rather than an open-ended hunt for more seams. Notably `renderKey`
+gating is a PERFORMANCE contract, not a correctness one: the preview gets away with
+repainting every tick because it is a dev tool, and the real dock would not.
+
 ### Pass ownership: per TOPIC, not per view
 
 `RhiSceneViewWidget` owns only what is genuinely one-per-view — the reference grid
