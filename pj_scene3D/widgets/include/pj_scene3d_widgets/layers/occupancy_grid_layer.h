@@ -14,6 +14,7 @@
 #include "pj_base/builtin/occupancy_grid.hpp"
 #include "pj_datastore/object_store.hpp"  // PJ::ObjectTopicId, PJ::SequentialUID
 #include "pj_scene3d_core/occupancy_grid_reconstructor.h"
+#include "pj_scene3d_widgets/occupancy_grid_sink.h"
 #include "pj_scene3d_widgets/passes/occupancy_grid_render_pass.h"
 #include "pj_scene3d_widgets/scene3d_layer.h"
 
@@ -127,7 +128,22 @@ class OccupancyGridLayer : public Scene3DLayer {
   float opacity_ = 0.7f;
 
   OccupancyGridReconstructor reconstructor_;
+  // Owned OpenGL pass = default sink; lifecycle stays on the concrete pass.
   OccupancyGridRenderPass grid_pass_;
+  IOccupancyGridSink* sink_ = nullptr;
+
+  [[nodiscard]] IOccupancyGridSink& sink() {
+    if (sink_ != nullptr) {
+      return *sink_;
+    }
+    return grid_pass_;
+  }
+
+ public:
+  /// Redirect the reconstructed map. nullptr restores the owned OpenGL pass.
+  void setSink(IOccupancyGridSink* sink) {
+    sink_ = sink;
+  }
 };
 
 }  // namespace pj::scene3d

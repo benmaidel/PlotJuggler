@@ -17,6 +17,7 @@
 #include "pj_datastore/object_store.hpp"            // PJ::ObjectTopicId, PJ::SequentialUID
 #include "pj_scene3d_core/poses_in_frame_render.h"  // PoseTriadInstance
 #include "pj_scene3d_widgets/passes/poses_render_pass.h"
+#include "pj_scene3d_widgets/poses_sink.h"
 #include "pj_scene3d_widgets/scene3d_layer.h"
 
 class QWidget;
@@ -145,7 +146,24 @@ class PosesInFrameLayer : public Scene3DLayer {
   int staged_revision_ = -1;
 
   std::vector<PoseTriadInstance> instances_;  // last expansion; also the test view
+  // The owned OpenGL pass is the DEFAULT sink, keeping the OpenGL path unchanged;
+  // the render-context lifecycle stays on the concrete pass. setSink() redirects the
+  // expanded instances to another backend.
   PosesRenderPass pass_;
+  IPosesSink* sink_ = nullptr;
+
+  [[nodiscard]] IPosesSink& sink() {
+    if (sink_ != nullptr) {
+      return *sink_;
+    }
+    return pass_;
+  }
+
+ public:
+  /// Redirect the expanded arm instances. nullptr restores the owned OpenGL pass.
+  void setSink(IPosesSink* sink) {
+    sink_ = sink;
+  }
 };
 
 }  // namespace pj::scene3d

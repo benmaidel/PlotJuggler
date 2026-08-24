@@ -17,6 +17,7 @@
 #include "pj_base/builtin/image.hpp"
 #include "pj_scene3d_core/depth_backproject.h"
 #include "pj_scene3d_widgets/passes/pointcloud_render_pass.h"
+#include "pj_scene3d_widgets/pointcloud_sink.h"
 #include "pj_scene3d_widgets/scene3d_layer.h"
 
 class QWidget;
@@ -167,7 +168,24 @@ class DepthCloudLayer : public Scene3DLayer {
   std::size_t last_point_count_ = 0;
   std::optional<IntrinsicsCache> intrinsics_cache_;
 
+  // Reuses IPointCloudSink rather than declaring a seam of its own: a depth cloud IS
+  // a point cloud by the time it reaches a backend — the back-projection happens in
+  // core before this. Owned OpenGL pass = default sink; lifecycle stays on it.
   PointcloudRenderPass cloud_pass_;
+  IPointCloudSink* sink_ = nullptr;
+
+  [[nodiscard]] IPointCloudSink& sink() {
+    if (sink_ != nullptr) {
+      return *sink_;
+    }
+    return cloud_pass_;
+  }
+
+ public:
+  /// Redirect the back-projected cloud. nullptr restores the owned OpenGL pass.
+  void setSink(IPointCloudSink* sink) {
+    sink_ = sink;
+  }
 };
 
 }  // namespace pj::scene3d

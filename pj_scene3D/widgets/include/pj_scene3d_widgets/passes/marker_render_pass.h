@@ -9,6 +9,7 @@
 #include "pj_scene3d_widgets/gl/buffer.h"
 #include "pj_scene3d_widgets/gl/program.h"
 #include "pj_scene3d_widgets/gl/vertex_array.h"
+#include "pj_scene3d_widgets/marker_sink.h"
 #include "pj_scene3d_widgets/render_pass.h"
 
 namespace pj::scene3d {
@@ -25,7 +26,7 @@ namespace pj::scene3d {
 //
 // v1 slice: CUBE only. Sphere/cylinder reuse the same instanced-solid path;
 // arrow/axes/lines/triangles land next. Text is deferred (v2).
-class MarkerRenderPass : public IRenderPass {
+class MarkerRenderPass : public IRenderPass, public IMarkerSink {
  public:
   MarkerRenderPass();
   ~MarkerRenderPass() override;
@@ -36,20 +37,17 @@ class MarkerRenderPass : public IRenderPass {
   // Swap the batch to draw. Cheap: just stores the shared_ptr; GL upload happens
   // lazily in render() (instance data depends on the live TF, so it can't be
   // baked here).
-  void setActive(std::shared_ptr<const DecodedSceneEntities> markers);
+  void setActive(std::shared_ptr<const DecodedSceneEntities> markers) override;
 
   // Viewer-side display overrides (a per-topic preference, NOT marker data):
   //  - opacity   : multiplies every primitive's alpha (transparency slider).
   //  - color_*   : when set, replaces every primitive's rgb with override_color.
   //  - wireframe : draws mesh primitives as edges (glPolygonMode). View-only —
   //                the marker protocol has no solid/wireframe field.
-  struct DisplayOverrides {
-    float opacity = 1.0F;
-    bool color_override = false;
-    glm::vec4 override_color{1.0F};
-    bool wireframe = false;
-  };
-  void setOverrides(const DisplayOverrides& overrides) {
+  // Moved to marker_sink.h so a backend-agnostic layer can name it; the alias keeps
+  // every MarkerRenderPass::DisplayOverrides call site compiling untouched.
+  using DisplayOverrides = MarkerDisplayOverrides;
+  void setOverrides(const DisplayOverrides& overrides) override {
     overrides_ = overrides;
   }
   [[nodiscard]] const DisplayOverrides& overrides() const {
@@ -58,7 +56,7 @@ class MarkerRenderPass : public IRenderPass {
 
   // Per-topic visibility (matches PointcloudRenderPass/OccupancyGridRenderPass):
   // when false, render() is a no-op but the active batch is retained.
-  void setVisible(bool visible) {
+  void setVisible(bool visible) override {
     visible_ = visible;
   }
 

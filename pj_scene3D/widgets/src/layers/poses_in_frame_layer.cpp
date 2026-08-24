@@ -128,7 +128,7 @@ void PosesInFrameLayer::detach() {
 
 void PosesInFrameLayer::resetReplayState() {
   instances_.clear();
-  pass_.setInstances({});
+  sink().setInstances({});
   staged_uid_ = {};
   staged_revision_ = -1;
   source_frame_.clear();
@@ -173,7 +173,7 @@ void PosesInFrameLayer::renderAt(int64_t time_ns) {
     // No sample at/before this time -> show nothing.
     if (!instances_.empty()) {
       instances_.clear();
-      pass_.setInstances({});
+      sink().setInstances({});
     }
     staged_uid_ = {};
     return;
@@ -201,7 +201,7 @@ void PosesInFrameLayer::renderAt(int64_t time_ns) {
                 .override_color = override_color_enabled_,
                 .color = glm::vec3(override_color_.redF(), override_color_.greenF(), override_color_.blueF()),
             });
-  pass_.setInstances(instances_);
+  sink().setInstances(instances_);
   staged_uid_ = entry->sequential_uid;
   staged_revision_ = style_revision_;
 }

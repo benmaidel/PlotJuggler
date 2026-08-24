@@ -91,8 +91,8 @@ bool OccupancyGridLayer::xmlLoadState(const QDomElement& element) {
   if (ok) {
     opacity_ = std::clamp(opacity, 0.0f, 1.0f);
   }
-  grid_pass_.setColorScheme(color_scheme_);
-  grid_pass_.setOpacity(opacity_);
+  sink().setColorScheme(color_scheme_);
+  sink().setOpacity(opacity_);
   return true;
 }
 
@@ -115,8 +115,8 @@ bool OccupancyGridLayer::attach(const PJ::SceneLayerContext& ctx) {
   updates_topic_ = store.findTopic(desc.dataset_id, desc.topic_name + "_updates");
 
   resetStreamingState();
-  grid_pass_.setColorScheme(color_scheme_);
-  grid_pass_.setOpacity(opacity_);
+  sink().setColorScheme(color_scheme_);
+  sink().setOpacity(opacity_);
   // Streaming-tolerant attach, matching PointCloudLayer/SceneEntitiesLayer: a grid
   // topic can be attached before its first sample lands (layout restore at stream
   // start, catalog drag). bootstrap() only pre-warms source_frame_ from the first
@@ -131,7 +131,7 @@ bool OccupancyGridLayer::attach(const PJ::SceneLayerContext& ctx) {
 }
 
 void OccupancyGridLayer::detach() {
-  grid_pass_.clearGrid();
+  sink().clearGrid();
   updates_topic_.reset();
   resetStreamingState();
 }
@@ -303,7 +303,7 @@ void OccupancyGridLayer::renderAt(int64_t time_ns) {
 
   const ReconstructedGrid& grid = update.grid;
   if (grid.empty()) {
-    grid_pass_.clearGrid();
+    sink().clearGrid();
     return;
   }
   if (grid.frame_id != source_frame_) {
@@ -316,7 +316,7 @@ void OccupancyGridLayer::renderAt(int64_t time_ns) {
   // pass discards dirty_rects on a full rebuild, so only materialize the vector
   // (potentially large after a backward-seek replay) on the incremental path.
   const bool incremental = update.kind == GridUpdate::Kind::kIncremental;
-  grid_pass_.setGrid(
+  sink().setGrid(
       grid, !incremental,
       incremental ? std::vector<CellRect>(update.dirty.begin(), update.dirty.end()) : std::vector<CellRect>{});
 }
@@ -342,7 +342,7 @@ void OccupancyGridLayer::setVisible(bool visible) {
     return;
   }
   visible_ = visible;
-  grid_pass_.setVisible(visible);
+  sink().setVisible(visible);
   emit visibilityChanged(visible);
   // Catch-up on un-hide is the dock's job: SceneDockWidget::setLayerVisible
   // re-delivers the last tracker time, marking tracker_dirty_ for the next paint.
@@ -390,13 +390,13 @@ std::optional<AABB> OccupancyGridLayer::worldBounds() const {
 
 void OccupancyGridLayer::setColorScheme(OccupancyGridRenderPass::ColorScheme scheme) {
   color_scheme_ = scheme;
-  grid_pass_.setColorScheme(scheme);
+  sink().setColorScheme(scheme);
   emit repaintRequested();
 }
 
 void OccupancyGridLayer::setOpacity(float opacity) {
   opacity_ = std::clamp(opacity, 0.0f, 1.0f);
-  grid_pass_.setOpacity(opacity_);
+  sink().setOpacity(opacity_);
   emit repaintRequested();
 }
 

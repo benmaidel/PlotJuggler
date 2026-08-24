@@ -13,6 +13,7 @@
 #include "pj_scene3d_widgets/gl/program.h"
 #include "pj_scene3d_widgets/gl/texture.h"
 #include "pj_scene3d_widgets/gl/vertex_array.h"
+#include "pj_scene3d_widgets/occupancy_grid_sink.h"
 #include "pj_scene3d_widgets/render_pass.h"
 
 namespace pj::scene3d {
@@ -22,9 +23,11 @@ namespace pj::scene3d {
 // in the local xy-plane. Cell bytes (-1 unknown, 0..100 occupancy %) live in a
 // single-channel R8 texture; the fragment shader maps them per the color scheme
 // and discards unknown cells (transparent).
-class OccupancyGridRenderPass : public IRenderPass {
+class OccupancyGridRenderPass : public IRenderPass, public IOccupancyGridSink {
  public:
-  enum class ColorScheme { kMap, kCostmap };
+  // Moved to occupancy_grid_sink.h so a backend-agnostic layer can name it; the
+  // alias keeps every OccupancyGridRenderPass::ColorScheme call site compiling.
+  using ColorScheme = OccupancyColorScheme;
 
   OccupancyGridRenderPass();
   ~OccupancyGridRenderPass() override;
@@ -38,16 +41,16 @@ class OccupancyGridRenderPass : public IRenderPass {
   // `full_rebuild` is set or the dims changed, otherwise an incremental
   // glTexSubImage2D of each `dirty_rects` entry. Safe to call from the GUI
   // thread outside paintGL.
-  void setGrid(const ReconstructedGrid& grid, bool full_rebuild, const std::vector<CellRect>& dirty_rects);
-  void clearGrid();
+  void setGrid(const ReconstructedGrid& grid, bool full_rebuild, const std::vector<CellRect>& dirty_rects) override;
+  void clearGrid() override;
 
-  void setColorScheme(ColorScheme scheme) {
+  void setColorScheme(ColorScheme scheme) override {
     color_scheme_ = scheme;
   }
-  void setOpacity(float opacity) {
+  void setOpacity(float opacity) override {
     opacity_ = opacity;
   }
-  void setVisible(bool visible) {
+  void setVisible(bool visible) override {
     visible_ = visible;
   }
   [[nodiscard]] bool isVisible() const {

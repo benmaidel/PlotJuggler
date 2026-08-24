@@ -17,6 +17,7 @@
 
 #include "pj_base/builtin/scene_entities.hpp"
 #include "pj_datastore/sequential_uid.hpp"
+#include "pj_scene3d_widgets/marker_sink.h"
 #include "pj_scene3d_widgets/passes/marker_render_pass.h"
 #include "pj_scene3d_widgets/passes/mesh_render_pass.h"
 #include "pj_scene3d_widgets/scene3d_layer.h"
@@ -255,7 +256,23 @@ class SceneEntitiesLayer : public Scene3DLayer {
   // from it on demand (overrideColor()) — single source of truth.
   MarkerRenderPass::DisplayOverrides overrides_;
 
+  // Owned OpenGL pass = default sink; lifecycle stays on the concrete pass.
   MarkerRenderPass pass_;
+  IMarkerSink* sink_ = nullptr;
+
+  [[nodiscard]] IMarkerSink& sink() {
+    if (sink_ != nullptr) {
+      return *sink_;
+    }
+    return pass_;
+  }
+
+ public:
+  /// Redirect the decoded batch and display state. nullptr restores the owned
+  /// OpenGL pass.
+  void setSink(IMarkerSink* sink) {
+    sink_ = sink;
+  }
 
   // Model path (ModelPrimitive meshes). entities_ is the replayed id-keyed
   // state at state_built_at_; model_frames_ caches the distinct entity frames

@@ -10,6 +10,7 @@
 #include "pj_scene3d_widgets/gl/buffer.h"
 #include "pj_scene3d_widgets/gl/program.h"
 #include "pj_scene3d_widgets/gl/vertex_array.h"
+#include "pj_scene3d_widgets/poses_sink.h"
 
 namespace pj::scene3d {
 
@@ -25,7 +26,7 @@ struct ViewParams;
 // Not an IRenderPass: it is owned and driven by PosesInFrameLayer (which resolves
 // the frame transform), mirroring how PointCloudLayer owns its render pass. Lit
 // shading + annotation blend match the TF "Frames" gizmos.
-class PosesRenderPass {
+class PosesRenderPass : public IPosesSink {
  public:
   // Build the program + the unit-arrow mesh + the instanced VAO. Per-frame-safe
   // (guards against re-init); requires a current GL context.
@@ -37,7 +38,7 @@ class PosesRenderPass {
 
   // Stage the arms to draw. CPU-only (no GL) — safe to call off the paint thread,
   // e.g. from the layer's tracker-time decode. Marks the GPU buffer dirty.
-  void setInstances(std::vector<PoseTriadInstance> instances);
+  void setInstances(std::vector<PoseTriadInstance> instances) override;
 
   // Draw every staged arm. `frame_world` is the fixed_frame<-source_frame SE(3)
   // the caller resolved from this frame's FrameContext. Sets its own annotation

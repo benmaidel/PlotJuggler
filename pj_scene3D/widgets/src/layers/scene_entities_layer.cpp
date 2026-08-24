@@ -288,7 +288,7 @@ void SceneEntitiesLayer::resetReplayState() {
   // Drop the active marker batch too: on a detach-less re-attach with the topic
   // still empty, renderAt() never runs, so a batch left here would keep drawing
   // prior-generation markers. setActive only swaps a shared_ptr — no GL.
-  pass_.setActive(nullptr);
+  sink().setActive(nullptr);
   source_frame_.clear();
   last_marker_uid_ = {};
   ts_first_.reset();
@@ -319,7 +319,7 @@ void SceneEntitiesLayer::setVisible(bool visible) {
     return;
   }
   visible_ = visible;
-  pass_.setVisible(visible);
+  sink().setVisible(visible);
   emit visibilityChanged(visible);
   // Catch-up on un-hide is the dock's job: SceneDockWidget::setLayerVisible
   // re-delivers the last tracker time (hidden layers receive no ticks), which
@@ -432,7 +432,7 @@ void SceneEntitiesLayer::renderAt(int64_t time_ns) {
     emit sourceFrameChanged(QString::fromStdString(source_frame_));
     emit fallbackFramesChanged(fallbackFrames());
   }
-  pass_.setActive(std::make_shared<const DecodedSceneEntities>(decodeSceneEntities(*batch)));
+  sink().setActive(std::make_shared<const DecodedSceneEntities>(decodeSceneEntities(*batch)));
   last_marker_uid_ = resolved->sequential_uid;
   // Seed the model path's cache with this just-decoded batch so the subsequent
   // ensureModelStateAt fold reuses it instead of re-parsing the SAME entry — a
@@ -445,7 +445,7 @@ void SceneEntitiesLayer::renderAt(int64_t time_ns) {
 }
 
 void SceneEntitiesLayer::applyOverrides() {
-  pass_.setOverrides(overrides_);
+  sink().setOverrides(overrides_);
   emit repaintRequested();
 }
 

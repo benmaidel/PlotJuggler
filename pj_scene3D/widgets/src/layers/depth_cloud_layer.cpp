@@ -47,11 +47,11 @@ bool isDepthEncoding(const std::string& encoding) {
 DepthCloudLayer::DepthCloudLayer(
     PJ::ObjectTopicId topic_id, QString display_name, BuiltinObjectType object_type, QObject* parent)
     : Scene3DLayer(parent), topic_id_(topic_id), display_name_(std::move(display_name)), object_type_(object_type) {
-  cloud_pass_.setShape(PointcloudRenderPass::Shape::kPoint);
-  cloud_pass_.setSizePixels(point_size_px_);
-  cloud_pass_.setColorType(PointcloudRenderPass::ColorType::kField);
-  cloud_pass_.setScalarAxis(-1);  // color by the uploaded depth scalar
-  cloud_pass_.setColormap(colormap_);
+  sink().setShape(PointcloudRenderPass::Shape::kPoint);
+  sink().setSizePixels(point_size_px_);
+  sink().setColorType(PointcloudRenderPass::ColorType::kField);
+  sink().setScalarAxis(-1);  // color by the uploaded depth scalar
+  sink().setColormap(colormap_);
 }
 
 DepthCloudLayer::~DepthCloudLayer() = default;
@@ -112,7 +112,7 @@ void DepthCloudLayer::detach() {
   world_bounds_.reset();
   intrinsics_cache_.reset();
   ctx_ = {};
-  cloud_pass_.setActiveCloud(nullptr);
+  sink().setActiveCloud(nullptr);
 }
 
 void DepthCloudLayer::setFixedFrame(const QString& frame) {
@@ -140,7 +140,7 @@ void DepthCloudLayer::setVisible(bool visible) {
     return;
   }
   visible_ = visible;
-  cloud_pass_.setVisible(visible);
+  sink().setVisible(visible);
   emit visibilityChanged(visible);
   emit repaintRequested();
 }
@@ -166,7 +166,7 @@ void DepthCloudLayer::setColormap(PointcloudRenderPass::Colormap cm) {
     return;
   }
   colormap_ = cm;
-  cloud_pass_.setColormap(colormap_);
+  sink().setColormap(colormap_);
   emit repaintRequested();
 }
 
@@ -175,7 +175,7 @@ void DepthCloudLayer::setPointSizePixels(float pixels) {
     return;
   }
   point_size_px_ = pixels;
-  cloud_pass_.setSizePixels(point_size_px_);
+  sink().setSizePixels(point_size_px_);
   emit repaintRequested();
 }
 
@@ -539,12 +539,12 @@ void DepthCloudLayer::renderAt(int64_t time_ns) {
   decoded.scalar_field_name = "depth";
 
   world_bounds_ = bounds.valid ? std::optional<AABB>{bounds} : std::nullopt;
-  cloud_pass_.setColormapRange(scalar_range.min, scalar_range.max);
+  sink().setColormapRange(scalar_range.min, scalar_range.max);
 
   last_point_count_ = points.size();
   decoded.positions = std::move(points);
   decoded.scalar = std::move(scalar);
-  cloud_pass_.setActiveCloud(std::make_shared<DecodedPointCloud>(std::move(decoded)));
+  sink().setActiveCloud(std::make_shared<DecodedPointCloud>(std::move(decoded)));
 
   last_pushed_id_ = id;
   emit warningChanged(false, QString());
