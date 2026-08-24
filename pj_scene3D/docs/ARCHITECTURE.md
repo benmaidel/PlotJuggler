@@ -175,6 +175,54 @@ screenshot, and it was missed because the check was "is a cloud present" rather 
 one that proves least. `PointCloudHonoursItsModelMatrix` in `rhi_passes_test` now
 asserts placement mechanically, which is what should have been guarding it.
 
+### IMeshSink — the sketch (not yet implemented)
+
+Written on paper before committing to robot models, to answer one question: markers
+needed a second placement shape after clouds/maps/poses needed a first, so does a
+mesh need a THIRD?
+
+**No — it needs none.** `RobotModelLayer::rebuildDrawCache()` resolves per-link TF
+itself and bakes it into every `DrawCall::model`, so mesh draws arrive already
+world-space and nothing is pushed. That also shows the existing shapes are chosen by
+COST rather than by accident:
+
+| Content | Placement | Why |
+|---|---|---|
+| cloud / map / poses | one matrix, pushed | baking would re-transform N points, a texture, or N instances on every TF tick |
+| markers | table of optionals, pushed | one batch spans several frames, any of which may fail to resolve |
+| meshes | baked into the draws | the layer already walks the link tree per rebuild, and the matrices are per-link anyway |
+
+So placement does not belong inside `I*Sink` after all: three shapes, each justified.
+
+The sink itself is small, and **`RhiMeshPass` already has exactly this shape** — the
+reshape falls entirely on the OpenGL side:
+
+```cpp
+class IMeshSink {
+  virtual void setMeshData(const std::string& key, MeshData data) = 0;
+  virtual void clearMeshes() = 0;
+  virtual void setVisualDraws(std::vector<DrawCall> draws) = 0;
+  virtual void setCollisionDraws(std::vector<DrawCall> draws) = 0;
+  virtual void setShadingParams(const MeshShadingParams& params) = 0;
+  [[nodiscard]] virtual AABB worldBoundsOfDraws(const std::vector<DrawCall>&) = 0;
+};
+```
+
+Three things to know before starting:
+
+1. **The one genuine reshape.** `MeshRenderPass::renderVisuals(view_params, draws,
+   opacity)` takes its data at RENDER time; the sink is state-push. So the GL pass has
+   to retain the draws and use them from its own `render()`. That is a behavioural
+   change to the shipping renderer, not a routing change — the reason robot models
+   were deferred while the other five layers were mechanical.
+2. **`MeshLoadSet::drain()` takes a concrete `MeshRenderPass&`** and calls
+   `setMeshData` on it. It needs re-typing to the interface — small, contained, but
+   easy to miss since it lives in `src/mesh_load_set.h` rather than with the layer.
+3. **The shadow path stays OUT of the seam.** `renderDepthOnly()` and
+   `meshShadowBounds()` exist for the shadow pre-pass, which has no QRhi counterpart.
+   They keep working through the existing `Scene3DLayer::renderShadowCasters()`
+   virtual, which is already OpenGL-only by design.
+
 ### Audit: what else is backend-specific?
 
 Done by reading every virtual on `ISceneLayer`/`Scene3DLayer` and every layer
