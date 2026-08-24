@@ -16,25 +16,15 @@
 #include "pj_scene3d_widgets/gl/texture.h"
 #include "pj_scene3d_widgets/gl/vertex_array.h"
 #include "pj_scene3d_widgets/render_pass.h"
+#include "pj_scene3d_widgets/voxel_grid_sink.h"
 #include "pj_widgets/Colormap.h"  // PJ::Colormap
 
 namespace pj::scene3d {
 
-// Everything the pass needs to display one voxel grid: placement metadata plus the
-// densely-packed field as EITHER a float volume (kScalar) OR RGBA8 (kRgba). The
-// CPU pack runs once per new grid (in the layer), so a re-scrub to a cached grid
-// re-uploads nothing. Built by VoxelGridLayer and moved into setGrid().
-struct VoxelGridUpload {
-  std::string frame_id;
-  PJ::sdk::Pose origin;       ///< Lower-front-left corner pose, in `frame_id`.
-  glm::vec3 cell_size{1.0f};  ///< Metric voxel size (need not be cubic).
-  uint32_t column_count = 0;  ///< x (fastest)
-  uint32_t row_count = 0;     ///< y
-  uint32_t slice_count = 0;   ///< z
-  VoxelValueKind kind = VoxelValueKind::kScalar;
-  std::vector<float> scalar;  ///< column*row*slice floats, when kind == kScalar
-  std::vector<uint8_t> rgba;  ///< column*row*slice*4 bytes, when kind == kRgba
-};
+// VoxelGridUpload — everything needed to display one grid, placement metadata plus
+// the densely-packed field — now lives in voxel_grid_sink.h, the backend-agnostic
+// seam this pass implements. The CPU pack still runs once per new grid in the layer,
+// so a re-scrub to a cached grid re-uploads nothing.
 
 // Draws a dense VoxelGrid as GPU-instanced cubes — one instance per voxel
 // (`glDrawElementsInstanced` over a static unit cube). The vertex shader derives
@@ -45,7 +35,7 @@ struct VoxelGridUpload {
 // cost is independent of voxel count (the hard requirement). Filtering display
 // knobs (mode/threshold/range/colormap/opacity) are uniform-only — changing them
 // while scrubbing re-uploads nothing.
-class VoxelGridRenderPass : public IRenderPass {
+class VoxelGridRenderPass : public IRenderPass, public IVoxelGridSink {
  public:
   VoxelGridRenderPass();
   ~VoxelGridRenderPass() override;
@@ -56,29 +46,29 @@ class VoxelGridRenderPass : public IRenderPass {
 
   // Stage a new grid for upload on the next render() (which runs with a current GL
   // context). Safe to call from the GUI thread outside paintGL.
-  void setGrid(VoxelGridUpload upload);
-  void clearGrid();
+  void setGrid(VoxelGridUpload upload) override;
+  void clearGrid() override;
 
-  void setDrawMode(VoxelDrawMode mode) {
+  void setDrawMode(VoxelDrawMode mode) override {
     draw_mode_ = mode;
   }
-  void setThreshold(float threshold) {
+  void setThreshold(float threshold) override {
     threshold_ = threshold;
   }
-  void setManualRange(float lo, float hi) {
+  void setManualRange(float lo, float hi) override {
     manual_lo_ = lo;
     manual_hi_ = hi;
   }
-  void setAutoRange(bool on) {
+  void setAutoRange(bool on) override {
     auto_range_ = on;
   }
-  void setColormap(PJ::Colormap colormap) {
+  void setColormap(PJ::Colormap colormap) override {
     colormap_ = colormap;
   }
-  void setOpacity(float opacity) {
+  void setOpacity(float opacity) override {
     opacity_ = opacity;
   }
-  void setVisible(bool visible) {
+  void setVisible(bool visible) override {
     visible_ = visible;
   }
   [[nodiscard]] bool isVisible() const {

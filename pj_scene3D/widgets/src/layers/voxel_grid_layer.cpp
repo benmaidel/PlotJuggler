@@ -121,7 +121,7 @@ bool VoxelGridLayer::attach(const PJ::SceneLayerContext& ctx) {
 }
 
 void VoxelGridLayer::detach() {
-  pass_.clearGrid();
+  sink().clearGrid();
   resetStreamingState();
 }
 
@@ -196,7 +196,7 @@ void VoxelGridLayer::renderAt(int64_t time_ns) {
     // Clear the pass AND invalidate the upload memo: otherwise scrubbing back onto
     // the same store entry would hit the fast-path below, skip the re-upload, and
     // leave the (now-cleared) pass empty — the grid would silently never return.
-    pass_.clearGrid();
+    sink().clearGrid();
     uploaded_uid_ = {};
     uploaded_field_setting_ = "\x01";
     return;
@@ -234,7 +234,7 @@ void VoxelGridLayer::renderAt(int64_t time_ns) {
 
   const PJ::sdk::PointField* field = resolveField(*grid);
   if (field == nullptr) {
-    pass_.clearGrid();
+    sink().clearGrid();
     uploaded_uid_ = entry->sequential_uid;
     uploaded_field_setting_ = active_field_name_;
     return;
@@ -253,7 +253,7 @@ void VoxelGridLayer::renderAt(int64_t time_ns) {
   } else {
     upload.rgba = packRgbaField(*grid, *field);
   }
-  pass_.setGrid(std::move(upload));
+  sink().setGrid(std::move(upload));
 
   uploaded_uid_ = entry->sequential_uid;
   uploaded_field_setting_ = active_field_name_;
@@ -276,7 +276,7 @@ void VoxelGridLayer::setVisible(bool visible) {
     return;
   }
   visible_ = visible;
-  pass_.setVisible(visible);
+  sink().setVisible(visible);
   emit visibilityChanged(visible);
   emit repaintRequested();
 }
@@ -312,13 +312,13 @@ std::optional<AABB> VoxelGridLayer::worldBounds() const {
 }
 
 void VoxelGridLayer::pushDisplayParamsToPass() {
-  pass_.setDrawMode(draw_mode_);
-  pass_.setThreshold(static_cast<float>(threshold_));
-  pass_.setAutoRange(auto_range_);
-  pass_.setManualRange(static_cast<float>(manual_lo_), static_cast<float>(manual_hi_));
-  pass_.setColormap(colormap_);
-  pass_.setOpacity(static_cast<float>(opacity_));
-  pass_.setVisible(visible_);
+  sink().setDrawMode(draw_mode_);
+  sink().setThreshold(static_cast<float>(threshold_));
+  sink().setAutoRange(auto_range_);
+  sink().setManualRange(static_cast<float>(manual_lo_), static_cast<float>(manual_hi_));
+  sink().setColormap(colormap_);
+  sink().setOpacity(static_cast<float>(opacity_));
+  sink().setVisible(visible_);
 }
 
 void VoxelGridLayer::setActiveField(const QString& field_name) {
@@ -329,38 +329,38 @@ void VoxelGridLayer::setActiveField(const QString& field_name) {
 
 void VoxelGridLayer::setDrawMode(VoxelDrawMode mode) {
   draw_mode_ = mode;
-  pass_.setDrawMode(mode);
+  sink().setDrawMode(mode);
   emit repaintRequested();
 }
 
 void VoxelGridLayer::setThreshold(double threshold) {
   threshold_ = threshold;
-  pass_.setThreshold(static_cast<float>(threshold));
+  sink().setThreshold(static_cast<float>(threshold));
   emit repaintRequested();
 }
 
 void VoxelGridLayer::setAutoRange(bool on) {
   auto_range_ = on;
-  pass_.setAutoRange(on);
+  sink().setAutoRange(on);
   emit repaintRequested();
 }
 
 void VoxelGridLayer::setManualRange(double lo, double hi) {
   manual_lo_ = lo;
   manual_hi_ = hi;
-  pass_.setManualRange(static_cast<float>(lo), static_cast<float>(hi));
+  sink().setManualRange(static_cast<float>(lo), static_cast<float>(hi));
   emit repaintRequested();
 }
 
 void VoxelGridLayer::setColormap(PJ::Colormap colormap) {
   colormap_ = colormap;
-  pass_.setColormap(colormap);
+  sink().setColormap(colormap);
   emit repaintRequested();
 }
 
 void VoxelGridLayer::setOpacity(double opacity) {
   opacity_ = std::clamp(opacity, 0.0, 1.0);
-  pass_.setOpacity(static_cast<float>(opacity_));
+  sink().setOpacity(static_cast<float>(opacity_));
   emit repaintRequested();
 }
 

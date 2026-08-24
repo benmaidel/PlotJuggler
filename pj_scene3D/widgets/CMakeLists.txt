@@ -98,6 +98,7 @@ set(PJ_SCENE3D_WIDGETS_SOURCES
   include/pj_scene3d_widgets/scene3d_layer.h
   include/pj_scene3d_widgets/mesh_data.h
   include/pj_scene3d_widgets/pointcloud_sink.h
+  include/pj_scene3d_widgets/voxel_grid_sink.h
   include/pj_scene3d_widgets/mesh_primitives.h
   include/pj_scene3d_widgets/layers/depth_cloud_layer.h
   include/pj_scene3d_widgets/layers/pointcloud_layer.h

@@ -16,6 +16,7 @@
 #include "pj_scene3d_core/voxel_grid_view.h"
 #include "pj_scene3d_widgets/passes/voxel_grid_render_pass.h"
 #include "pj_scene3d_widgets/scene3d_layer.h"
+#include "pj_scene3d_widgets/voxel_grid_sink.h"
 #include "pj_widgets/Colormap.h"
 
 class QWidget;
@@ -128,7 +129,36 @@ class VoxelGridLayer : public Scene3DLayer {
   PJ::Colormap colormap_ = PJ::Colormap::kTurbo;
   double opacity_ = 1.0;
 
+  // The OpenGL pass this layer owns, and the sink its selected field is routed to.
+  // Same shape as PointCloudLayer: the owned pass is the DEFAULT sink, so the OpenGL
+  // path is unchanged, while the render-context lifecycle stays on the concrete pass
+  // because that part is inherently backend-shaped. setSink() redirects the output
+  // to another backend; the owned pass is then inert, since a non-OpenGL view never
+  // calls its GL hooks.
   VoxelGridRenderPass pass_;
+  IVoxelGridSink* sink_ = nullptr;
+
+  // Explicit returns, not a ternary: the arms have no common type the conditional
+  // operator can settle on.
+  [[nodiscard]] IVoxelGridSink& sink() {
+    if (sink_ != nullptr) {
+      return *sink_;
+    }
+    return pass_;
+  }
+  [[nodiscard]] const IVoxelGridSink& sink() const {
+    if (sink_ != nullptr) {
+      return *sink_;
+    }
+    return pass_;
+  }
+
+ public:
+  /// Redirect this layer's selected field and display state. nullptr restores the
+  /// owned OpenGL pass.
+  void setSink(IVoxelGridSink* sink) {
+    sink_ = sink;
+  }
 };
 
 }  // namespace pj::scene3d
