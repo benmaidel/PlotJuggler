@@ -175,6 +175,33 @@ screenshot, and it was missed because the check was "is a cloud present" rather 
 one that proves least. `PointCloudHonoursItsModelMatrix` in `rhi_passes_test` now
 asserts placement mechanically, which is what should have been guarding it.
 
+### KNOWN FLAW: one pass per view, but N layers per type
+
+**The QRhi renderer cannot show two topics of the same kind.** Verified, not
+suspected: adding a second point-cloud topic and routing both layers through their
+adapters makes the first cloud vanish entirely — last writer wins.
+
+The cause is a structural mismatch in ownership:
+
+| | OpenGL | QRhi |
+|---|---|---|
+| pass ownership | each LAYER owns its pass (`PointCloudLayer::cloud_pass_`) | the VIEW owns exactly one (`RhiSceneViewWidget::pointcloud_pass_`) |
+| N topics of a kind | N passes, all drawn | 1 pass, overwritten |
+
+`Scene3DDockWidget::addTopic()` creates one layer per topic, so this is the normal
+case in the real dock, not an edge case. The preview dock hides it only because it is
+scoped to one topic per kind — a scoping choice that, like the `advance()` gap before
+it, made a broken design look sound.
+
+**The fix is to invert pass ownership**: an adapter should own its pass, as GL layers
+do, and `RhiSceneViewWidget::passes()` should return a list contributed by the
+adapters rather than one hard-coded member per kind. That also settles draw ORDER,
+which the current fixed member order silently decides.
+
+The fixture keeps a second cloud topic (`/points2`, a column helix in `base_link`,
+deliberately a different shape from the spiral shell) purely as the regression guard
+for that work.
+
 ### Scene3DRhiPreviewDock — what it is for
 
 A developer preview, opt-in via `PJ_SCENE3D_RHI`, that puts the QRhi renderer inside

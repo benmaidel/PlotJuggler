@@ -423,6 +423,25 @@ def tf_message(stamp_ns: int, t_seconds: float) -> bytes:
     return cdr.bytes()
 
 
+def column_points(count: int) -> bytes:
+    """Packed x/y/z/intensity float32 quadruples in a tight vertical COLUMN.
+
+    Deliberately a different shape from the spiral shell so that, when two cloud
+    topics are shown at once, it is obvious which one is on screen — the question a
+    multiplicity test has to answer.
+    """
+    raw = bytearray()
+    for index in range(count):
+        fraction = index / max(count - 1, 1)
+        angle = fraction * 24.0
+        radius = 0.18
+        x = radius * math.cos(angle)
+        y = radius * math.sin(angle)
+        z = 0.1 + 1.8 * fraction
+        raw.extend(struct.pack("<ffff", x, y, z, fraction))
+    return bytes(raw)
+
+
 def spiral_shell_points(count: int, phase: float) -> bytes:
     """Packed x/y/z/intensity float32 quadruples on a spherical spiral.
 
@@ -855,6 +874,12 @@ def generate(path: Path, include_image: bool = True) -> None:
             topic="/poses", message_encoding="cdr", schema_id=poses_schema
         )
 
+        # A SECOND point-cloud topic, in a different frame and a different shape.
+        # Its only job is to answer whether two topics of one kind can coexist.
+        cloud2_channel = writer.register_channel(
+            topic="/points2", message_encoding="cdr", schema_id=cloud_schema
+        )
+
         occupancy_schema = writer.register_schema(
             name="nav_msgs/msg/OccupancyGrid", encoding="ros2msg", data=SCHEMA_OCCUPANCY_GRID
         )
@@ -896,6 +921,16 @@ def generate(path: Path, include_image: bool = True) -> None:
                     spiral_shell_points(point_count, phase=0.4 * index),
                     point_count,
                 ),
+            )
+
+        cloud2_payload = column_points(400)
+        for index in range(cloud_count):
+            stamp_ns = int(index / cloud_hz * 1e9)
+            writer.add_message(
+                channel_id=cloud2_channel,
+                log_time=stamp_ns,
+                publish_time=stamp_ns,
+                data=point_cloud2(stamp_ns, "base_link", cloud2_payload, 400),
             )
 
         markers_count = int(duration_s * markers_hz)
@@ -956,6 +991,7 @@ def generate(path: Path, include_image: bool = True) -> None:
         writer.finish()
 
     summary = f"{tf_count} /tf msgs, {cloud_count} /points msgs x {point_count} points"
+    summary += f", {cloud_count} /points2 msgs x 400 in base_link"
     summary += f", {markers_count} /markers msgs x3 in {MARKERS_FRAME_ID}"
     summary += f", {poses_count} /poses msgs x {POSES_COUNT} in {POSES_FRAME_ID}"
     summary += f", {occupancy_count} /map msgs {OCCUPANCY_WIDTH}x{OCCUPANCY_HEIGHT} in {OCCUPANCY_FRAME_ID}"
