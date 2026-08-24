@@ -93,16 +93,55 @@ void RhiSceneViewWidget::setSceneSamples(int samples) {
   update();
 }
 
+void RhiSceneViewWidget::addLayerPass(IRhiRenderPass* pass, LayerPassSlot slot) {
+  if (pass == nullptr) {
+    return;
+  }
+  const auto existing = std::find_if(
+      layer_passes_.begin(), layer_passes_.end(), [pass](const auto& entry) { return entry.second == pass; });
+  if (existing != layer_passes_.end()) {
+    existing->first = slot;  // re-registering only moves it between slots
+    return;
+  }
+  layer_passes_.emplace_back(slot, pass);
+  update();
+}
+
+void RhiSceneViewWidget::removeLayerPass(IRhiRenderPass* pass) {
+  const auto it = std::find_if(
+      layer_passes_.begin(), layer_passes_.end(), [pass](const auto& entry) { return entry.second == pass; });
+  if (it == layer_passes_.end()) {
+    return;
+  }
+  layer_passes_.erase(it);
+  update();
+}
+
 std::vector<IRhiRenderPass*> RhiSceneViewWidget::passes() {
-  // Order matters, and it is layered by depth behaviour. The reference grid and
-  // the TF connection lines depth-test but do not depth-write, and the occupancy
-  // map is a translucent ground overlay, so all three go down first. The meshes,
-  // voxel cubes and point cloud then depth-write over them (the mesh pass runs its
-  // own opaque-then-translucent split internally). The gizmos come last: pose
-  // triads blend (they honour an opacity knob), so they must see the final depth
-  // buffer to be occluded correctly.
-  return {&grid_pass_,       &occupancy_pass_, &tf_connections_pass_, &mesh_pass_, &voxel_pass_,
-          &pointcloud_pass_, &marker_pass_,    &axis_pass_,           &poses_pass_};
+  // Order is by DEPTH BEHAVIOUR. The reference grid and the TF connection lines
+  // depth-test but do not depth-write, and a ground overlay is translucent, so those
+  // go down first; opaque layer content then depth-writes over them; blended
+  // annotations come after so they see the finished depth buffer. The view's own TF
+  // triads draw last, on top of everything, because they are the reference the user
+  // reads placement against.
+  std::vector<IRhiRenderPass*> ordered;
+  ordered.reserve(3 + layer_passes_.size());
+
+  const auto append = [&](LayerPassSlot slot) {
+    for (const auto& [entry_slot, pass] : layer_passes_) {
+      if (entry_slot == slot) {
+        ordered.push_back(pass);
+      }
+    }
+  };
+
+  ordered.push_back(&grid_pass_);
+  append(LayerPassSlot::kGroundOverlay);
+  ordered.push_back(&tf_connections_pass_);
+  append(LayerPassSlot::kOpaque);
+  append(LayerPassSlot::kAnnotation);
+  ordered.push_back(&axis_pass_);
+  return ordered;
 }
 
 glm::mat4 RhiSceneViewWidget::buildScreenFromView(const QSize& pixel_size) const {
@@ -199,9 +238,17 @@ void RhiSceneViewWidget::render(QRhiCommandBuffer* cb) {
   const bool hdr_ready = hdr_target_.ensure(*r, ctx.pixel_size, desired_samples_);
   // The geometry pipelines are only valid for the descriptor they were built
   // against, and the HDR chain makes a fresh one whenever it is re-created.
-  if (hdr_ready && hdr_target_.renderPassDescriptor() != scene_rpd_) {
+  if (hdr_ready) {
+    const bool rpd_changed = hdr_target_.renderPassDescriptor() != scene_rpd_;
     for (IRhiRenderPass* pass : passes()) {
-      pass->release();
+      // A changed descriptor invalidates every pipeline, so those get released
+      // first. Otherwise this is just the idempotent path: initialize() returns
+      // immediately when the pass is already built for this device and sample count,
+      // which is what lets a pass registered mid-session be set up on its first
+      // frame without the view tracking who is new.
+      if (rpd_changed) {
+        pass->release();
+      }
       if (!pass->initialize(*r, *hdr_target_.renderPassDescriptor(), hdr_target_.sampleCount())) {
         qCWarning(lcRhiView) << "a render pass failed to initialize and will be skipped";
       }

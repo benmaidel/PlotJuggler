@@ -175,32 +175,30 @@ screenshot, and it was missed because the check was "is a cloud present" rather 
 one that proves least. `PointCloudHonoursItsModelMatrix` in `rhi_passes_test` now
 asserts placement mechanically, which is what should have been guarding it.
 
-### KNOWN FLAW: one pass per view, but N layers per type
+### Pass ownership: per TOPIC, not per view
 
-**The QRhi renderer cannot show two topics of the same kind.** Verified, not
-suspected: adding a second point-cloud topic and routing both layers through their
-adapters makes the first cloud vanish entirely — last writer wins.
+`RhiSceneViewWidget` owns only what is genuinely one-per-view — the reference grid
+and the TF overlay (triads + connection lines). Everything else is contributed:
 
-The cause is a structural mismatch in ownership:
+```cpp
+view.addLayerPass(pass, LayerPassSlot::kOpaque);   // caller keeps ownership
+view.removeLayerPass(pass);                        // BEFORE destroying it
+```
 
-| | OpenGL | QRhi |
-|---|---|---|
-| pass ownership | each LAYER owns its pass (`PointCloudLayer::cloud_pass_`) | the VIEW owns exactly one (`RhiSceneViewWidget::pointcloud_pass_`) |
-| N topics of a kind | N passes, all drawn | 1 pass, overwritten |
+This is not a stylistic choice. The view originally held one pass per KIND, and
+because `Scene3DDockWidget::addTopic()` creates one layer per topic, a second
+point-cloud topic silently overwrote the first — verified by adding `/points2` to the
+fixture and watching the spiral shell vanish entirely. Passes are per-topic, so their
+ownership belongs with whoever owns the topic.
 
-`Scene3DDockWidget::addTopic()` creates one layer per topic, so this is the normal
-case in the real dock, not an edge case. The preview dock hides it only because it is
-scoped to one topic per kind — a scoping choice that, like the `advance()` gap before
-it, made a broken design look sound.
+`LayerPassSlot` makes draw ORDER explicit, where it used to be decided implicitly by
+member declaration order. The slots are by DEPTH BEHAVIOUR rather than content type:
+`kGroundOverlay` (translucent decals that depth-test without writing), `kOpaque`
+(depth-writing content), `kAnnotation` (blended gizmos, which must see the finished
+depth buffer). The view brackets them with the grid first and its own TF triads last.
 
-**The fix is to invert pass ownership**: an adapter should own its pass, as GL layers
-do, and `RhiSceneViewWidget::passes()` should return a list contributed by the
-adapters rather than one hard-coded member per kind. That also settles draw ORDER,
-which the current fixed member order silently decides.
-
-The fixture keeps a second cloud topic (`/points2`, a column helix in `base_link`,
-deliberately a different shape from the spiral shell) purely as the regression guard
-for that work.
+`/points2` — a column helix in `base_link`, deliberately a different shape from the
+spiral shell — stays in the fixture as the regression guard.
 
 ### Scene3DRhiPreviewDock — what it is for
 

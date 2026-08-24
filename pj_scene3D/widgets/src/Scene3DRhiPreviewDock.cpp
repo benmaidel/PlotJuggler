@@ -23,9 +23,13 @@
 #include "pj_scene3d_widgets/layers/poses_in_frame_layer.h"
 #include "pj_scene3d_widgets/layers/scene_entities_layer.h"
 #include "pj_scene3d_widgets/render_pass.h"  // FrameContext
+#include "pj_scene3d_widgets/rhi/rhi_marker_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_marker_sink.h"
+#include "pj_scene3d_widgets/rhi/rhi_occupancy_grid_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_occupancy_grid_sink.h"
+#include "pj_scene3d_widgets/rhi/rhi_pointcloud_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_pointcloud_sink.h"
+#include "pj_scene3d_widgets/rhi/rhi_poses_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_poses_sink.h"
 #include "pj_scene3d_widgets/rhi/rhi_scene_view_widget.h"
 #include "pj_scene3d_widgets/transform_service.h"
@@ -67,12 +71,14 @@ Scene3DRhiPreviewDock::Scene3DRhiPreviewDock(QWidget* parent) : QWidget(parent) 
 
 Scene3DRhiPreviewDock::~Scene3DRhiPreviewDock() {
   // Order matters: the layer holds a raw pointer to the sink.
-  if (cloud_layer_ != nullptr) {
-    cloud_layer_->setSink(nullptr);
-    cloud_layer_->detach();
+  for (CloudEntry& entry : clouds_) {
+    entry.layer->setSink(nullptr);
+    entry.layer->detach();
+    if (view_ != nullptr) {
+      view_->removeLayerPass(entry.pass.get());
+    }
   }
-  cloud_layer_.reset();
-  cloud_sink_.reset();
+  clouds_.clear();
   if (map_layer_ != nullptr) {
     map_layer_->setSink(nullptr);
     map_layer_->detach();
@@ -91,6 +97,12 @@ Scene3DRhiPreviewDock::~Scene3DRhiPreviewDock() {
   }
   marker_layer_.reset();
   marker_sink_.reset();
+  // Unregister before the passes are destroyed by their unique_ptrs.
+  if (view_ != nullptr) {
+    view_->removeLayerPass(map_pass_.get());
+    view_->removeLayerPass(poses_pass_.get());
+    view_->removeLayerPass(marker_pass_.get());
+  }
 }
 
 void Scene3DRhiPreviewDock::setTransformService(TransformService* service) {
@@ -140,7 +152,7 @@ void Scene3DRhiPreviewDock::tryAdoptExistingDataset() {
     const PJ::sdk::BuiltinObjectType type = PJ::objectTypeFromMetadata(descriptor.metadata_json);
     const bool is_cloud =
         type == PJ::sdk::BuiltinObjectType::kPointCloud || type == PJ::sdk::BuiltinObjectType::kCompressedPointCloud;
-    if (cloud_layer_ == nullptr && is_cloud) {
+    if (is_cloud) {
       adoptPointCloudTopic(topic, type, QString::fromStdString(descriptor.topic_name));
     } else if (map_layer_ == nullptr && type == PJ::sdk::BuiltinObjectType::kOccupancyGrid) {
       adoptOccupancyTopic(topic, QString::fromStdString(descriptor.topic_name));
@@ -199,32 +211,30 @@ void Scene3DRhiPreviewDock::adoptPointCloudTopic(
   if (session_ == nullptr || tf_buffer_ == nullptr || view_ == nullptr) {
     return;
   }
-  // Detach the previous cloud before its sink dies: the layer holds a raw pointer to
-  // the sink, so tearing them down in the wrong order would leave it dangling.
-  if (cloud_layer_ != nullptr) {
-    cloud_layer_->setSink(nullptr);
-    cloud_layer_->detach();
-    cloud_layer_.reset();
-  }
-  cloud_sink_ = std::make_unique<rhi::RhiPointCloudSink>(view_->pointcloudPass());
-
-  cloud_layer_ = std::make_unique<PointCloudLayer>(topic_id, title, object_type);
-  // Routed BEFORE attach so the layer's bootstrap decode lands on the QRhi pass
-  // rather than on its own (inert) OpenGL one.
-  cloud_layer_->setSink(cloud_sink_.get());
+  CloudEntry entry;
+  // Its OWN pass, in the opaque slot. One pass per topic is the whole point: the
+  // view used to hold a single pointcloud pass, so a second topic overwrote the
+  // first with no error anywhere.
+  entry.pass = std::make_unique<rhi::RhiPointcloudPass>();
+  view_->addLayerPass(entry.pass.get(), rhi::RhiSceneViewWidget::LayerPassSlot::kOpaque);
+  entry.sink = std::make_unique<rhi::RhiPointCloudSink>(*entry.pass);
+  entry.layer = std::make_unique<PointCloudLayer>(topic_id, title, object_type);
+  // Routed BEFORE attach so the bootstrap decode lands on the QRhi pass rather than
+  // on the layer's own (inert) OpenGL one.
+  entry.layer->setSink(entry.sink.get());
 
   Scene3DLayerContext ctx;
   ctx.session = session_;
   ctx.tf_buffer = tf_buffer_;
-  if (!cloud_layer_->attach(ctx)) {
+  if (!entry.layer->attach(ctx)) {
     qCWarning(lcRhiPreview) << "point cloud layer failed to attach for" << title;
-    cloud_layer_.reset();
-    cloud_sink_.reset();
+    view_->removeLayerPass(entry.pass.get());
     return;
   }
-  cloud_layer_->setFixedFrame(QString::fromStdString(fixed_frame_));
+  entry.layer->setFixedFrame(QString::fromStdString(fixed_frame_));
+  clouds_.push_back(std::move(entry));
   framed_ = false;  // re-frame now that there is a cloud extent to include
-  qCInfo(lcRhiPreview) << "showing point cloud topic" << title;
+  qCInfo(lcRhiPreview) << "showing point cloud topic" << title << "(" << clouds_.size() << "total )";
   view_->update();
 }
 
@@ -250,9 +260,9 @@ void Scene3DRhiPreviewDock::chooseFixedFrame() {
 void Scene3DRhiPreviewDock::onTrackerTime(double time) {
   tracker_ns_ = toNanoseconds(time);
   refreshTf();
-  if (cloud_layer_ != nullptr) {
+  for (CloudEntry& entry : clouds_) {
     // The layer defers its decode to the next paint, so this only marks it dirty.
-    cloud_layer_->setTrackerTime(PJ::fromRaw(tracker_ns_));
+    entry.layer->setTrackerTime(PJ::fromRaw(tracker_ns_));
   }
   if (map_layer_ != nullptr) {
     map_layer_->setTrackerTime(PJ::fromRaw(tracker_ns_));
@@ -347,8 +357,8 @@ void Scene3DRhiPreviewDock::refreshTf() {
   // this the OpenGL view would be the only thing able to drive them, and a layer
   // would sit frozen at whatever attach() happened to push.
   const FrameContext frame_ctx{*tf_buffer_, fixed_frame_, stamp};
-  if (cloud_layer_ != nullptr) {
-    cloud_layer_->advance(frame_ctx);
+  for (CloudEntry& entry : clouds_) {
+    entry.layer->advance(frame_ctx);
   }
   if (map_layer_ != nullptr) {
     map_layer_->advance(frame_ctx);
@@ -360,20 +370,24 @@ void Scene3DRhiPreviewDock::refreshTf() {
     marker_layer_->advance(frame_ctx);
   }
 
+  // Placement of the FIRST cloud, kept for the camera framing below.
   glm::mat4 cloud_world(1.0F);
-  if (cloud_layer_ != nullptr) {
-    cloud_layer_->setFixedFrame(QString::fromStdString(fixed_frame_));
+  for (std::size_t index = 0; index < clouds_.size(); ++index) {
+    CloudEntry& entry = clouds_[index];
+    entry.layer->setFixedFrame(QString::fromStdString(fixed_frame_));
     // The QRhi cloud pass has no TF access of its own — the OpenGL pass resolves
     // this from its FrameContext per frame — so the transform has to be pushed from
     // here, every refresh, or a cloud in a moving frame freezes at its first pose.
-    const std::string source = cloud_layer_->sourceFrame().toStdString();
+    glm::mat4 world(1.0F);
+    const std::string source = entry.layer->sourceFrame().toStdString();
     if (!source.empty()) {
       if (const auto resolved = tf_buffer_->tryLookupTransform(fixed_frame_, source, stamp); resolved.has_value()) {
-        cloud_world = glm::mat4(resolved.value().matrix());
+        world = glm::mat4(resolved.value().matrix());
       }
     }
-    if (cloud_sink_ != nullptr) {
-      cloud_sink_->setFrameTransform(cloud_world);
+    entry.sink->setFrameTransform(world);
+    if (index == 0) {
+      cloud_world = world;
     }
   }
   if (map_layer_ != nullptr) {
@@ -434,7 +448,10 @@ void Scene3DRhiPreviewDock::adoptOccupancyTopic(PJ::ObjectTopicId topic_id, cons
     map_layer_->detach();
     map_layer_.reset();
   }
-  map_sink_ = std::make_unique<rhi::RhiOccupancyGridSink>(view_->occupancyGridPass());
+  view_->removeLayerPass(map_pass_.get());
+  map_pass_ = std::make_unique<rhi::RhiOccupancyGridPass>();
+  view_->addLayerPass(map_pass_.get(), rhi::RhiSceneViewWidget::LayerPassSlot::kGroundOverlay);
+  map_sink_ = std::make_unique<rhi::RhiOccupancyGridSink>(*map_pass_);
 
   map_layer_ = std::make_unique<OccupancyGridLayer>(topic_id, title);
   // Routed BEFORE attach so the bootstrap decode lands on the QRhi pass rather than
@@ -464,7 +481,10 @@ void Scene3DRhiPreviewDock::adoptPosesTopic(PJ::ObjectTopicId topic_id, const QS
     poses_layer_->detach();
     poses_layer_.reset();
   }
-  poses_sink_ = std::make_unique<rhi::RhiPosesSink>(view_->posesPass());
+  view_->removeLayerPass(poses_pass_.get());
+  poses_pass_ = std::make_unique<rhi::RhiPosesPass>();
+  view_->addLayerPass(poses_pass_.get(), rhi::RhiSceneViewWidget::LayerPassSlot::kAnnotation);
+  poses_sink_ = std::make_unique<rhi::RhiPosesSink>(*poses_pass_);
 
   poses_layer_ = std::make_unique<PosesInFrameLayer>(topic_id, title);
   poses_layer_->setSink(poses_sink_.get());
@@ -492,7 +512,10 @@ void Scene3DRhiPreviewDock::adoptMarkerTopic(PJ::ObjectTopicId topic_id, const Q
     marker_layer_->detach();
     marker_layer_.reset();
   }
-  marker_sink_ = std::make_unique<rhi::RhiMarkerSink>(view_->markerPass());
+  view_->removeLayerPass(marker_pass_.get());
+  marker_pass_ = std::make_unique<rhi::RhiMarkerPass>();
+  view_->addLayerPass(marker_pass_.get(), rhi::RhiSceneViewWidget::LayerPassSlot::kAnnotation);
+  marker_sink_ = std::make_unique<rhi::RhiMarkerSink>(*marker_pass_);
 
   marker_layer_ = std::make_unique<SceneEntitiesLayer>(topic_id, title);
   marker_layer_->setSink(marker_sink_.get());
@@ -527,8 +550,8 @@ void Scene3DRhiPreviewDock::frameSceneOnce(const std::vector<glm::mat4>& triads,
   // metres out, which a metres-wide cloud then fills entirely. Its bounds are in the
   // SOURCE frame, so all eight corners go through the frame transform — transforming
   // just min/max would be wrong under rotation.
-  if (cloud_layer_ != nullptr) {
-    if (const std::optional<AABB> bounds = cloud_layer_->worldBounds(); bounds.has_value() && bounds->valid) {
+  if (!clouds_.empty()) {
+    if (const std::optional<AABB> bounds = clouds_.front().layer->worldBounds(); bounds.has_value() && bounds->valid) {
       for (int corner = 0; corner < 8; ++corner) {
         const glm::vec3 local(
             (corner & 1) != 0 ? bounds->max.x : bounds->min.x, (corner & 2) != 0 ? bounds->max.y : bounds->min.y,

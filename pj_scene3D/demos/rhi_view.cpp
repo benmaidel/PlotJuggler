@@ -32,7 +32,12 @@
 #include "pj_scene3d_core/poses_in_frame_render.h"
 #include "pj_scene3d_widgets/mesh_primitives.h"
 #include "pj_scene3d_widgets/rhi/rhi_marker_pass.h"
+#include "pj_scene3d_widgets/rhi/rhi_mesh_pass.h"
+#include "pj_scene3d_widgets/rhi/rhi_occupancy_grid_pass.h"
+#include "pj_scene3d_widgets/rhi/rhi_pointcloud_pass.h"
+#include "pj_scene3d_widgets/rhi/rhi_poses_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_scene_view_widget.h"
+#include "pj_scene3d_widgets/rhi/rhi_voxel_grid_pass.h"
 
 // Q_INIT_RESOURCE must sit at global scope: inside an anonymous namespace its
 // extern declaration gets internal linkage and never resolves to the static
@@ -69,6 +74,22 @@ int main(int argc, char** argv) {
   // The same three-frame chain the MCAP fixture publishes on /tf
   // (world -> base_link -> sensor), so this render is comparable with the
   // committed GL reference image.
+  // The view owns only the grid and the TF overlay; content passes are per-topic, so
+  // a caller creates and registers its own. These live for the whole run.
+  using Slot = pj::scene3d::rhi::RhiSceneViewWidget::LayerPassSlot;
+  pj::scene3d::rhi::RhiPointcloudPass cloud_pass;
+  pj::scene3d::rhi::RhiVoxelGridPass voxel_pass;
+  pj::scene3d::rhi::RhiOccupancyGridPass occupancy_pass;
+  pj::scene3d::rhi::RhiMeshPass mesh_pass;
+  pj::scene3d::rhi::RhiPosesPass poses_pass;
+  pj::scene3d::rhi::RhiMarkerPass marker_pass;
+  view.addLayerPass(&occupancy_pass, Slot::kGroundOverlay);
+  view.addLayerPass(&mesh_pass, Slot::kOpaque);
+  view.addLayerPass(&voxel_pass, Slot::kOpaque);
+  view.addLayerPass(&cloud_pass, Slot::kOpaque);
+  view.addLayerPass(&marker_pass, Slot::kAnnotation);
+  view.addLayerPass(&poses_pass, Slot::kAnnotation);
+
   view.axisPass().setFrames({
       glm::mat4(1.0F),
       glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 0.0F, 1.0F)),
@@ -100,11 +121,10 @@ int main(int argc, char** argv) {
     const float radius = 1.2F + (t * 2.5F);
     cloud.push_back({radius * std::cos(angle), radius * std::sin(angle), 0.4F + (t * 3.0F), t});
   }
-  view.pointcloudPass().setPoints(
-      cloud.data(), static_cast<int>(cloud.size()), pj::scene3d::rhi::RhiPointcloudPass::Layout{});
-  view.pointcloudPass().setScalarRange(0.0F, 1.0F);
-  view.pointcloudPass().setColormap(PJ::Colormap::kTurbo);
-  view.pointcloudPass().setPointRadius(0.045F);
+  cloud_pass.setPoints(cloud.data(), static_cast<int>(cloud.size()), pj::scene3d::rhi::RhiPointcloudPass::Layout{});
+  cloud_pass.setScalarRange(0.0F, 1.0F);
+  cloud_pass.setColormap(PJ::Colormap::kTurbo);
+  cloud_pass.setPointRadius(0.045F);
 
   // Dense voxel field: a hollow-ish shell whose value ramps with height, drawn
   // with the kAtOrAbove predicate so the shader's degenerate-clip path runs for
@@ -128,7 +148,7 @@ int main(int argc, char** argv) {
         }
       }
     }
-    auto& vox = view.voxelGridPass();
+    auto& vox = voxel_pass;
     vox.setField(field.data(), vc, vr, vs);
     vox.setCellSize(glm::vec3(0.22F));
     glm::mat4 vmodel(1.0F);
@@ -162,7 +182,7 @@ int main(int argc, char** argv) {
         cells[(static_cast<size_t>(r) * gw) + static_cast<size_t>(c)] = v;
       }
     }
-    auto& occ = view.occupancyGridPass();
+    auto& occ = occupancy_pass;
     occ.setGrid(cells.data(), gw, gh);
     // Place a 12 m x 12 m map centred on the origin, just above z=0.
     glm::mat4 model(1.0F);
@@ -183,7 +203,7 @@ int main(int argc, char** argv) {
   // what the split-sum specular IBL buys), one rough dielectric box, and a
   // translucent box that has to land in the blended bucket.
   {
-    auto& mesh = view.meshPass();
+    auto& mesh = mesh_pass;
     std::vector<pj::scene3d::rhi::RhiMeshPass::DrawCall> visuals;
 
     constexpr int kSpheres = 5;
@@ -279,7 +299,7 @@ int main(int argc, char** argv) {
     style.color = glm::vec3(0.95F, 0.45F, 0.10F);
     style.opacity = 0.75F;
 
-    auto& poses = view.posesPass();
+    auto& poses = poses_pass;
     poses.setInstances(pj::scene3d::buildPoseTriadInstances(msg, style));
     // A non-identity parent frame: offset and yawed, so a wrong frame_world would
     // be obvious rather than hiding behind the identity.
@@ -347,7 +367,7 @@ int main(int argc, char** argv) {
       batch->triangles.push_back(std::move(tris));
     }
 
-    auto& markers = view.markerPass();
+    auto& markers = marker_pass;
     markers.setActive(batch);
     // Frame 0 sits at the origin; frame 1 is offset and yawed, so a broken
     // frame-index lookup would misplace the arrow and axes visibly.

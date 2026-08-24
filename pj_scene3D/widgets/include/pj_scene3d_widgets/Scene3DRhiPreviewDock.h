@@ -27,9 +27,13 @@ class PosesInFrameLayer;
 class SceneEntitiesLayer;
 
 namespace rhi {
+class RhiOccupancyGridPass;
 class RhiOccupancyGridSink;
+class RhiPointcloudPass;
 class RhiPointCloudSink;
+class RhiMarkerPass;
 class RhiMarkerSink;
+class RhiPosesPass;
 class RhiPosesSink;
 class RhiSceneViewWidget;
 }  // namespace rhi
@@ -114,6 +118,9 @@ class Scene3DRhiPreviewDock : public QWidget, public PJ::IDataWidget {
 
   /// Attach a PointCloudLayer for `topic_id` and route it to the QRhi pass. Replaces
   /// any previously attached cloud: the preview shows one at a time.
+  /// Attach a PointCloudLayer for `topic_id`, give it its own pass, and route it to
+  /// the QRhi view. ADDS to the set rather than replacing — several cloud topics can
+  /// be shown at once.
   void adoptPointCloudTopic(PJ::ObjectTopicId topic_id, PJ::sdk::BuiltinObjectType object_type, const QString& title);
   /// Attach an OccupancyGridLayer for `topic_id` and route it to the QRhi pass.
   /// Replaces any previously attached map: the preview shows one at a time.
@@ -126,15 +133,32 @@ class Scene3DRhiPreviewDock : public QWidget, public PJ::IDataWidget {
   rhi::RhiSceneViewWidget* view_ = nullptr;
   /// The one point-cloud topic on show, if any, plus the adapter binding it to the
   /// QRhi pass. The sink must outlive the layer, which holds a raw pointer to it.
-  std::unique_ptr<rhi::RhiPointCloudSink> cloud_sink_;
-  std::unique_ptr<PointCloudLayer> cloud_layer_;
+  /// One adopted point-cloud topic: its own pass (registered with the view), the
+  /// adapter binding the layer to it, and the layer itself.
+  ///
+  /// Field ORDER is load-bearing — destruction runs in reverse, so the layer dies
+  /// before the sink it points at, which dies before the pass it points at.
+  struct CloudEntry {
+    std::unique_ptr<rhi::RhiPointcloudPass> pass;
+    std::unique_ptr<rhi::RhiPointCloudSink> sink;
+    std::unique_ptr<PointCloudLayer> layer;
+  };
+  /// A VECTOR, not a single entry: passes are per-topic, and holding one per kind is
+  /// exactly what let a second cloud silently overwrite the first. Clouds are the
+  /// kind the fixture exercises with two topics, so they are the demonstration that
+  /// multiplicity works; the other kinds below stay single purely to keep this dev
+  /// preview small.
+  std::vector<CloudEntry> clouds_;
   /// The one occupancy-grid topic on show, if any. Sink must outlive the layer.
+  std::unique_ptr<rhi::RhiOccupancyGridPass> map_pass_;
   std::unique_ptr<rhi::RhiOccupancyGridSink> map_sink_;
   std::unique_ptr<OccupancyGridLayer> map_layer_;
   /// The one pose-array topic on show, if any. Sink must outlive the layer.
+  std::unique_ptr<rhi::RhiPosesPass> poses_pass_;
   std::unique_ptr<rhi::RhiPosesSink> poses_sink_;
   std::unique_ptr<PosesInFrameLayer> poses_layer_;
   /// The one marker topic on show, if any. Sink must outlive the layer.
+  std::unique_ptr<rhi::RhiMarkerPass> marker_pass_;
   std::unique_ptr<rhi::RhiMarkerSink> marker_sink_;
   std::unique_ptr<SceneEntitiesLayer> marker_layer_;
   TransformService* transform_service_ = nullptr;

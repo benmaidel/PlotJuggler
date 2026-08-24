@@ -5,6 +5,7 @@
 #include <QPoint>
 #include <QRhiWidget>
 #include <memory>
+#include <utility>
 #include <vector>
 
 #include "pj_scene3d_core/camera/camera.h"
@@ -49,33 +50,9 @@ class RhiSceneViewWidget : public QRhiWidget {
   RhiAxisPass& axisPass() {
     return axis_pass_;
   }
-  /// The point-cloud pass, exposed so callers can push points.
-  RhiPointcloudPass& pointcloudPass() {
-    return pointcloud_pass_;
-  }
   /// The TF parent-connection line pass.
   RhiTfConnectionsPass& tfConnectionsPass() {
     return tf_connections_pass_;
-  }
-  /// The occupancy-grid / costmap pass.
-  RhiOccupancyGridPass& occupancyGridPass() {
-    return occupancy_pass_;
-  }
-  /// The dense voxel-grid pass.
-  RhiVoxelGridPass& voxelGridPass() {
-    return voxel_pass_;
-  }
-  /// The pose-array (PoseArray / PosesInFrame) triad pass.
-  RhiPosesPass& posesPass() {
-    return poses_pass_;
-  }
-  /// The URDF / scene mesh pass (glTF metallic-roughness shading).
-  RhiMeshPass& meshPass() {
-    return mesh_pass_;
-  }
-  /// The SceneEntities / marker pass.
-  RhiMarkerPass& markerPass() {
-    return marker_pass_;
   }
   /// The composite / tonemap present pass, which owns the look knobs (tonemap
   /// mode, exposure, saturation) and the renderer's single sRGB encode.
@@ -89,6 +66,29 @@ class RhiSceneViewWidget : public QRhiWidget {
   /// Whether SSAO contributes this frame. It needs the resolved depth, so it is
   /// off whenever the HDR chain could not produce one.
   void setSsaoEnabled(bool enabled);
+
+  /// Where a layer-contributed pass sits in the draw sequence.
+  ///
+  /// Ordering is by DEPTH BEHAVIOUR, not by content type, which is why it is an
+  /// explicit slot rather than registration order: the ground overlay is translucent
+  /// and depth-tests without writing, opaque content must depth-write over it, and
+  /// blended annotations must see the finished depth buffer to be occluded correctly.
+  enum class LayerPassSlot {
+    kGroundOverlay,  ///< Occupancy maps and similar translucent ground decals.
+    kOpaque,         ///< Meshes, voxel grids, point clouds.
+    kAnnotation,     ///< Blended gizmos: markers, pose triads.
+  };
+
+  /// Register a pass contributed by a layer adapter. The view does NOT take
+  /// ownership — the caller keeps it alive until removeLayerPass().
+  ///
+  /// This exists because passes are per-TOPIC, not per-view: a dock can hold several
+  /// point-cloud topics, and each needs its own pass. Holding one pass per kind on
+  /// the view meant the second topic silently overwrote the first.
+  void addLayerPass(IRhiRenderPass* pass, LayerPassSlot slot);
+  /// Unregister a pass. MUST be called before destroying it, or the next frame
+  /// dereferences a dangling pointer. Safe to call for a pass never added.
+  void removeLayerPass(IRhiRenderPass* pass);
 
   /// Replace the camera model. The new model adopts the outgoing model's pose, so
   /// switching does not move the viewpoint.
@@ -151,19 +151,17 @@ class RhiSceneViewWidget : public QRhiWidget {
   std::unique_ptr<ICamera> camera_;
   RhiGridPass grid_pass_;
   RhiAxisPass axis_pass_;
-  RhiPointcloudPass pointcloud_pass_;
   RhiTfConnectionsPass tf_connections_pass_;
-  RhiOccupancyGridPass occupancy_pass_;
-  RhiVoxelGridPass voxel_pass_;
-  RhiPosesPass poses_pass_;
-  RhiMeshPass mesh_pass_;
-  RhiMarkerPass marker_pass_;
 
   /// Off-screen multisample HDR chain the scene renders into, plus the fullscreen
   /// pass that composites it onto the widget target. When the chain cannot be
   /// built the widget draws the scene straight into its own target instead, which
   /// costs MSAA and HDR but still shows the scene.
   RhiHdrTarget hdr_target_;
+  /// Layer-contributed passes, kept per slot so the draw order is the slot order and
+  /// registration order only breaks ties within a slot.
+  std::vector<std::pair<LayerPassSlot, IRhiRenderPass*>> layer_passes_;
+
   RhiPresentPass present_pass_;
   RhiSsaoPass ssao_pass_;
   int desired_samples_ = 4;
