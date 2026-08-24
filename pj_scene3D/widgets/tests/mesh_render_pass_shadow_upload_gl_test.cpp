@@ -32,6 +32,7 @@
 #include <string>
 #include <vector>
 
+#include "gtest_skip_exit.h"
 #include "pj_scene3d_widgets/mesh_data.h"
 #include "pj_scene3d_widgets/passes/mesh_render_pass.h"
 
@@ -159,5 +160,5 @@ int main(int argc, char** argv) {
 
   QGuiApplication app(argc, argv);
   ::testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
+  return pj::scene3d::test::runTestsReportingSkip();
 }

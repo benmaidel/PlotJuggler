@@ -47,6 +47,7 @@
 #include <utility>
 
 #include "gl_scene_test_support.h"  // haveGl, liveGlVersion
+#include "gtest_skip_exit.h"
 #include "pj_base/sdk/platform.hpp"
 #include "pj_base/time.hpp"
 #include "pj_scene3d_core/tf/tf_buffer.h"
@@ -335,5 +336,5 @@ int main(int argc, char** argv) {
   app.setPalette(pal);
 
   ::testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
+  return pj::scene3d::test::runTestsReportingSkip();
 }

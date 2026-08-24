@@ -40,6 +40,7 @@
 #include <vector>
 
 #include "gl_scene_test_support.h"  // haveGl, liveGlVersion
+#include "gtest_skip_exit.h"
 #include "pj_base/time.hpp"
 #include "pj_scene3d_core/tf/tf_buffer.h"
 #include "pj_scene3d_core/tf/transform.h"
@@ -209,5 +210,5 @@ int main(int argc, char** argv) {
 
   QApplication app(argc, argv);
   ::testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
+  return pj::scene3d::test::runTestsReportingSkip();
 }

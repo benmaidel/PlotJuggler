@@ -20,6 +20,7 @@
 #include <utility>
 #include <vector>
 
+#include "gtest_skip_exit.h"
 #include "pj_base/span.hpp"
 #include "pj_base/time.hpp"
 #include "pj_scene3d_core/pointcloud.h"
@@ -305,5 +306,5 @@ TEST(PointcloudContextRecreationTest, GpuAabbReductionFiresBoundsCallbackWhenGl4
 int main(int argc, char** argv) {
   QGuiApplication app(argc, argv);
   ::testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
+  return pj::scene3d::test::runTestsReportingSkip();
 }

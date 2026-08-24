@@ -222,9 +222,16 @@ gates swapping the renderer under the real dock; see `docs/ARCHITECTURE.md` →
 The QRhi/Metal port is covered by `tests/rhi_passes_test.cpp`, which renders each
 ported pass through an offscreen QRhi and the production HDR chain + composite. It
 does NOT need OpenGL 4.5, so unlike the `*_gl_test` targets it actually runs on
-macOS/Metal — worth knowing, because a `*_gl_test` there reports **Passed to ctest
-while internally skipping every case** (`GL 4.1 Metal ... below 4.5`), so a green
-suite on macOS says nothing about the OpenGL renderer. Validate GL changes on Linux.
+macOS/Metal.
+
+**Render-backed suites report SKIPPED, not passed**, when no usable context exists —
+via `SKIP_RETURN_CODE 77` plus `tests/gtest_skip_exit.h`. Without that they exited 0
+and ctest counted them among the passing tests, so a green "243 passed" on macOS said
+nothing whatsoever about the OpenGL renderer. ctest now ends with an explicit "The
+following tests did not run" block instead. A PARTIAL skip still reports success:
+some coverage did happen, and calling that "skipped" would be its own false signal.
+**Validate OpenGL changes on Linux** — CI runs `xvfb-run -a ctest` under llvmpipe,
+which is where those suites genuinely execute.
 
 `demos/rhi_view.cpp` (`scene3d_rhi_view`) remains the visual harness: one frame to a
 PNG, with coverage and tone counts. When a pass draws nothing, temporarily returning

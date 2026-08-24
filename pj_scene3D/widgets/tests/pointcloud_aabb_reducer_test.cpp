@@ -28,6 +28,8 @@
 #include <utility>
 #include <vector>
 
+#include "gtest_skip_exit.h"
+
 namespace {
 
 using pj::scene3d::AABB;
@@ -223,5 +225,5 @@ TEST_F(AabbReducerTest, MatchesCpuOnLargeRandomCloud) {
 int main(int argc, char** argv) {
   QGuiApplication app(argc, argv);
   ::testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
+  return pj::scene3d::test::runTestsReportingSkip();
 }

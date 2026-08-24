@@ -368,6 +368,9 @@ if(PJ_BUILD_TESTS)
   )
   target_compile_options(voxel_grid_render_pass_gl_test PRIVATE ${PJ_WARNING_FLAGS} ${PJ_SANITIZER_FLAGS})
   add_test(NAME voxel_grid_render_pass_gl_test COMMAND voxel_grid_render_pass_gl_test)
+  # Report "no usable render context" as SKIPPED, not PASSED — see
+  # tests/gtest_skip_exit.h for why a silent pass here is actively misleading.
+  set_tests_properties(voxel_grid_render_pass_gl_test PROPERTIES SKIP_RETURN_CODE 77)
 
   # Real-GL evidence that the sphere-imposter point size is constant under an
   # ORTHOGRAPHIC camera (no 1/depth perspective scaling) yet still shrinks with
@@ -386,6 +389,9 @@ if(PJ_BUILD_TESTS)
   )
   target_compile_options(rhi_passes_test PRIVATE ${PJ_WARNING_FLAGS} ${PJ_SANITIZER_FLAGS})
   add_test(NAME rhi_passes_test COMMAND rhi_passes_test)
+  # Report "no usable render context" as SKIPPED, not PASSED — see
+  # tests/gtest_skip_exit.h for why a silent pass here is actively misleading.
+  set_tests_properties(rhi_passes_test PROPERTIES SKIP_RETURN_CODE 77)
 
   add_executable(pointcloud_sphere_size_gl_test
     tests/pointcloud_sphere_size_gl_test.cpp
@@ -396,6 +402,9 @@ if(PJ_BUILD_TESTS)
   )
   target_compile_options(pointcloud_sphere_size_gl_test PRIVATE ${PJ_WARNING_FLAGS} ${PJ_SANITIZER_FLAGS})
   add_test(NAME pointcloud_sphere_size_gl_test COMMAND pointcloud_sphere_size_gl_test)
+  # Report "no usable render context" as SKIPPED, not PASSED — see
+  # tests/gtest_skip_exit.h for why a silent pass here is actively misleading.
+  set_tests_properties(pointcloud_sphere_size_gl_test PROPERTIES SKIP_RETURN_CODE 77)
 
   # Real-GL regression: the shadow depth pre-pass must not corrupt a prior caster's
   # VAO element-buffer binding when the next caster uploads mid-loop (the streaming
@@ -409,6 +418,9 @@ if(PJ_BUILD_TESTS)
   )
   target_compile_options(mesh_render_pass_shadow_upload_gl_test PRIVATE ${PJ_WARNING_FLAGS} ${PJ_SANITIZER_FLAGS})
   add_test(NAME mesh_render_pass_shadow_upload_gl_test COMMAND mesh_render_pass_shadow_upload_gl_test)
+  # Report "no usable render context" as SKIPPED, not PASSED — see
+  # tests/gtest_skip_exit.h for why a silent pass here is actively misleading.
+  set_tests_properties(mesh_render_pass_shadow_upload_gl_test PROPERTIES SKIP_RETURN_CODE 77)
 
   # PointCloudLayer sample-identity caches: reset on dataset replace (stale
   # decoded/failed/pushed ids under a stable topic id), stamp-0 is data not a
@@ -456,6 +468,9 @@ if(PJ_BUILD_TESTS)
   target_compile_definitions(pointcloud_context_recreation_test PRIVATE PJ_SCENE3D_TEST_HOOKS)
   target_compile_options(pointcloud_context_recreation_test PRIVATE ${PJ_WARNING_FLAGS} ${PJ_SANITIZER_FLAGS})
   add_test(NAME pointcloud_context_recreation_test COMMAND pointcloud_context_recreation_test)
+  # Report "no usable render context" as SKIPPED, not PASSED — see
+  # tests/gtest_skip_exit.h for why a silent pass here is actively misleading.
+  set_tests_properties(pointcloud_context_recreation_test PROPERTIES SKIP_RETURN_CODE 77)
 
   add_executable(pointcloud_aabb_reducer_test
     tests/pointcloud_aabb_reducer_test.cpp
@@ -466,6 +481,9 @@ if(PJ_BUILD_TESTS)
   )
   target_compile_options(pointcloud_aabb_reducer_test PRIVATE ${PJ_WARNING_FLAGS} ${PJ_SANITIZER_FLAGS})
   add_test(NAME pointcloud_aabb_reducer_test COMMAND pointcloud_aabb_reducer_test)
+  # Report "no usable render context" as SKIPPED, not PASSED — see
+  # tests/gtest_skip_exit.h for why a silent pass here is actively misleading.
+  set_tests_properties(pointcloud_aabb_reducer_test PROPERTIES SKIP_RETURN_CODE 77)
 
   # Copy/paste/apply-to-family: serializeLayerParams/applyLayerParams must
   # round-trip every PointCloudLayer parameter (the data path the Scene3D config
@@ -610,6 +628,9 @@ if(PJ_BUILD_TESTS)
   )
   target_compile_options(hud_overlay_gl_test PRIVATE ${PJ_WARNING_FLAGS} ${PJ_SANITIZER_FLAGS})
   add_test(NAME hud_overlay_gl_test COMMAND hud_overlay_gl_test)
+  # Report "no usable render context" as SKIPPED, not PASSED — see
+  # tests/gtest_skip_exit.h for why a silent pass here is actively misleading.
+  set_tests_properties(hud_overlay_gl_test PROPERTIES SKIP_RETURN_CODE 77)
 
   # Real-GL integration test for the TF parent-connection lines: renders the
   # scene and asserts magenta line pixels appear only when enabled (and survive
@@ -624,6 +645,9 @@ if(PJ_BUILD_TESTS)
   )
   target_compile_options(tf_connections_gl_test PRIVATE ${PJ_WARNING_FLAGS} ${PJ_SANITIZER_FLAGS})
   add_test(NAME tf_connections_gl_test COMMAND tf_connections_gl_test)
+  # Report "no usable render context" as SKIPPED, not PASSED — see
+  # tests/gtest_skip_exit.h for why a silent pass here is actively misleading.
+  set_tests_properties(tf_connections_gl_test PROPERTIES SKIP_RETURN_CODE 77)
 
   # Real-GL regression test: a mesh casts a floor shadow, the data is deleted
   # (TransformBuffer dropped), and the test asserts the shadow pre-pass binds NO
@@ -638,6 +662,9 @@ if(PJ_BUILD_TESTS)
   )
   target_compile_options(shadow_persistence_gl_test PRIVATE ${PJ_WARNING_FLAGS} ${PJ_SANITIZER_FLAGS})
   add_test(NAME shadow_persistence_gl_test COMMAND shadow_persistence_gl_test)
+  # Report "no usable render context" as SKIPPED, not PASSED — see
+  # tests/gtest_skip_exit.h for why a silent pass here is actively misleading.
+  set_tests_properties(shadow_persistence_gl_test PROPERTIES SKIP_RETURN_CODE 77)
 
   # Pure (non-GL) URDF parser + package-resolver unit tests. They reach the
   # private src/ headers (urdf_parser.h / urdf_package_resolver.h) and use small
