@@ -16,6 +16,10 @@ and a colour image — so a screenshot is a meaningful visual check:
   ``/points`` ``sensor_msgs/msg/PointCloud2``  a 2000-point spiral shell in the
               ``sensor`` frame, 5 Hz for 5 s. Fields are x/y/z/intensity, all
               FLOAT32 (``PointField.datatype == 7``), ``point_step`` 16.
+  ``/poses``  ``foxglove_msgs/msg/PosesInFrame``  a 12-pose fan in the ``sensor``
+              frame, 10 Hz for 5 s. ``sensor`` circles AND spins, so ignoring the
+              frame transform leaves the fan at the origin and ignoring its rotation
+              leaves it unspun — two distinct, visible failures.
   ``/map``    ``nav_msgs/msg/OccupancyGrid``   a 40x40 asymmetric costmap at 0.1 m,
               1 Hz for 5 s, published in ``base_link`` — deliberately NOT the fixed
               frame, so a renderer that ignores the fixed_frame<-source_frame
@@ -167,6 +171,30 @@ Vector3 translation
 Quaternion rotation
 ================================================================================
 MSG: geometry_msgs/Vector3
+float64 x
+float64 y
+float64 z
+================================================================================
+MSG: geometry_msgs/Quaternion
+float64 x
+float64 y
+float64 z
+float64 w
+"""
+
+SCHEMA_POSES_IN_FRAME = b"""builtin_interfaces/Time timestamp
+string frame_id
+geometry_msgs/Pose[] poses
+================================================================================
+MSG: builtin_interfaces/Time
+int32 sec
+uint32 nanosec
+================================================================================
+MSG: geometry_msgs/Pose
+Point position
+Quaternion orientation
+================================================================================
+MSG: geometry_msgs/Point
 float64 x
 float64 y
 float64 z
@@ -373,6 +401,41 @@ MARKER_COLOR = (255, 128, 0)  # orange
 DIAGONAL_HALF_WIDTH = 5
 #: Side (px) of the filled square anchored in the BOTTOM-LEFT corner.
 CORNER_SQUARE = 48
+
+
+POSES_COUNT = 12
+#: Published in ``sensor``, which both circles the origin and SPINS three times
+#: faster than the base — so a renderer that ignores the frame transform leaves the
+#: fan at the world origin, and one that ignores its ROTATION leaves it unspun. Both
+#: failures are visible; neither is if everything is published in the fixed frame.
+POSES_FRAME_ID = "sensor"
+
+
+def poses_in_frame_message(stamp_ns: int, frame_id: str, count: int) -> bytes:
+    """foxglove_msgs/msg/PosesInFrame.
+
+    NOTE the first field is a BARE builtin_interfaces/Time, not a std_msgs/Header —
+    writing a Header here would shift every subsequent field.
+
+    The poses are a fan at increasing radius with yaw tangent to it, which makes both
+    the placement and the orientation of each arm checkable by eye.
+    """
+    cdr = CdrWriter()
+    cdr.int32(stamp_ns // 1_000_000_000)
+    cdr.uint32(stamp_ns % 1_000_000_000)
+    cdr.string(frame_id)
+    cdr.sequence_length(count)
+    for index in range(count):
+        fraction = index / max(count - 1, 1)
+        angle = fraction * 1.6
+        radius = 0.4 + 0.9 * fraction
+        for component in (radius * math.cos(angle), radius * math.sin(angle), 0.25):
+            cdr.float64(component)
+        # Yaw tangent to the fan: q = (0, 0, sin(yaw/2), cos(yaw/2)).
+        yaw = angle + math.pi / 2.0
+        for component in (0.0, 0.0, math.sin(yaw * 0.5), math.cos(yaw * 0.5)):
+            cdr.float64(component)
+    return cdr.bytes()
 
 
 OCCUPANCY_WIDTH = 40
@@ -618,6 +681,7 @@ def generate(path: Path, include_image: bool = True) -> None:
     tf_hz = 20.0
     cloud_hz = 5.0
     image_hz = 10.0
+    poses_hz = 10.0
     # The map is static content published slowly, as a real map server does.
     occupancy_hz = 1.0
     point_count = 2000
@@ -639,6 +703,13 @@ def generate(path: Path, include_image: bool = True) -> None:
         )
         cloud_channel = writer.register_channel(
             topic="/points", message_encoding="cdr", schema_id=cloud_schema
+        )
+
+        poses_schema = writer.register_schema(
+            name="foxglove_msgs/msg/PosesInFrame", encoding="ros2msg", data=SCHEMA_POSES_IN_FRAME
+        )
+        poses_channel = writer.register_channel(
+            topic="/poses", message_encoding="cdr", schema_id=poses_schema
         )
 
         occupancy_schema = writer.register_schema(
@@ -684,6 +755,16 @@ def generate(path: Path, include_image: bool = True) -> None:
                 ),
             )
 
+        poses_count = int(duration_s * poses_hz)
+        for index in range(poses_count):
+            stamp_ns = int(index / poses_hz * 1e9)
+            writer.add_message(
+                channel_id=poses_channel,
+                log_time=stamp_ns,
+                publish_time=stamp_ns,
+                data=poses_in_frame_message(stamp_ns, POSES_FRAME_ID, POSES_COUNT),
+            )
+
         # One shared payload: the map is static, and what it exercises is PLACEMENT in
         # a non-fixed frame, which the moving base_link already varies for us.
         occupancy_payload = occupancy_cells(OCCUPANCY_WIDTH, OCCUPANCY_HEIGHT)
@@ -722,6 +803,7 @@ def generate(path: Path, include_image: bool = True) -> None:
         writer.finish()
 
     summary = f"{tf_count} /tf msgs, {cloud_count} /points msgs x {point_count} points"
+    summary += f", {poses_count} /poses msgs x {POSES_COUNT} in {POSES_FRAME_ID}"
     summary += f", {occupancy_count} /map msgs {OCCUPANCY_WIDTH}x{OCCUPANCY_HEIGHT} in {OCCUPANCY_FRAME_ID}"
     if image_count:
         summary += f", {image_count} /image msgs {IMAGE_WIDTH}x{IMAGE_HEIGHT} {IMAGE_ENCODING}"

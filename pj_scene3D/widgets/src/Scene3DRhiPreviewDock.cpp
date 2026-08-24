@@ -20,9 +20,11 @@
 #include "pj_scene3d_core/tf/tf_buffer.h"
 #include "pj_scene3d_widgets/layers/occupancy_grid_layer.h"
 #include "pj_scene3d_widgets/layers/pointcloud_layer.h"
+#include "pj_scene3d_widgets/layers/poses_in_frame_layer.h"
 #include "pj_scene3d_widgets/render_pass.h"  // FrameContext
 #include "pj_scene3d_widgets/rhi/rhi_occupancy_grid_sink.h"
 #include "pj_scene3d_widgets/rhi/rhi_pointcloud_sink.h"
+#include "pj_scene3d_widgets/rhi/rhi_poses_sink.h"
 #include "pj_scene3d_widgets/rhi/rhi_scene_view_widget.h"
 #include "pj_scene3d_widgets/transform_service.h"
 
@@ -75,6 +77,12 @@ Scene3DRhiPreviewDock::~Scene3DRhiPreviewDock() {
   }
   map_layer_.reset();
   map_sink_.reset();
+  if (poses_layer_ != nullptr) {
+    poses_layer_->setSink(nullptr);
+    poses_layer_->detach();
+  }
+  poses_layer_.reset();
+  poses_sink_.reset();
 }
 
 void Scene3DRhiPreviewDock::setTransformService(TransformService* service) {
@@ -128,6 +136,8 @@ void Scene3DRhiPreviewDock::tryAdoptExistingDataset() {
       adoptPointCloudTopic(topic, type, QString::fromStdString(descriptor.topic_name));
     } else if (map_layer_ == nullptr && type == PJ::sdk::BuiltinObjectType::kOccupancyGrid) {
       adoptOccupancyTopic(topic, QString::fromStdString(descriptor.topic_name));
+    } else if (poses_layer_ == nullptr && type == PJ::sdk::BuiltinObjectType::kPosesInFrame) {
+      adoptPosesTopic(topic, QString::fromStdString(descriptor.topic_name));
     }
   }
 }
@@ -163,6 +173,8 @@ bool Scene3DRhiPreviewDock::tryAcceptObjectTopic(
     adoptPointCloudTopic(topic_id, object_type, title);
   } else if (object_type == PJ::sdk::BuiltinObjectType::kOccupancyGrid) {
     adoptOccupancyTopic(topic_id, title);
+  } else if (object_type == PJ::sdk::BuiltinObjectType::kPosesInFrame) {
+    adoptPosesTopic(topic_id, title);
   }
   // Other types are accepted anyway, for the dataset id the drop revealed. Keeping
   // the dock is better than having the host replace a working preview because it
@@ -232,6 +244,9 @@ void Scene3DRhiPreviewDock::onTrackerTime(double time) {
   }
   if (map_layer_ != nullptr) {
     map_layer_->setTrackerTime(PJ::fromRaw(tracker_ns_));
+  }
+  if (poses_layer_ != nullptr) {
+    poses_layer_->setTrackerTime(PJ::fromRaw(tracker_ns_));
   }
 }
 
@@ -323,6 +338,9 @@ void Scene3DRhiPreviewDock::refreshTf() {
   if (map_layer_ != nullptr) {
     map_layer_->advance(frame_ctx);
   }
+  if (poses_layer_ != nullptr) {
+    poses_layer_->advance(frame_ctx);
+  }
 
   glm::mat4 cloud_world(1.0F);
   if (cloud_layer_ != nullptr) {
@@ -351,6 +369,20 @@ void Scene3DRhiPreviewDock::refreshTf() {
     }
     if (map_sink_ != nullptr) {
       map_sink_->setFrameTransform(map_world);
+    }
+  }
+  if (poses_layer_ != nullptr) {
+    poses_layer_->setFixedFrame(QString::fromStdString(fixed_frame_));
+    const std::string poses_source = poses_layer_->sourceFrame().toStdString();
+    glm::mat4 poses_world(1.0F);
+    if (!poses_source.empty()) {
+      if (const auto resolved = tf_buffer_->tryLookupTransform(fixed_frame_, poses_source, stamp);
+          resolved.has_value()) {
+        poses_world = glm::mat4(resolved.value().matrix());
+      }
+    }
+    if (poses_sink_ != nullptr) {
+      poses_sink_->setFrameTransform(poses_world);
     }
   }
   frameSceneOnce(triads, cloud_world);
@@ -387,6 +419,34 @@ void Scene3DRhiPreviewDock::adoptOccupancyTopic(PJ::ObjectTopicId topic_id, cons
   }
   map_layer_->setFixedFrame(QString::fromStdString(fixed_frame_));
   qCInfo(lcRhiPreview) << "showing occupancy grid topic" << title;
+  view_->update();
+}
+
+void Scene3DRhiPreviewDock::adoptPosesTopic(PJ::ObjectTopicId topic_id, const QString& title) {
+  if (session_ == nullptr || tf_buffer_ == nullptr || view_ == nullptr) {
+    return;
+  }
+  if (poses_layer_ != nullptr) {
+    poses_layer_->setSink(nullptr);
+    poses_layer_->detach();
+    poses_layer_.reset();
+  }
+  poses_sink_ = std::make_unique<rhi::RhiPosesSink>(view_->posesPass());
+
+  poses_layer_ = std::make_unique<PosesInFrameLayer>(topic_id, title);
+  poses_layer_->setSink(poses_sink_.get());
+
+  Scene3DLayerContext ctx;
+  ctx.session = session_;
+  ctx.tf_buffer = tf_buffer_;
+  if (!poses_layer_->attach(ctx)) {
+    qCWarning(lcRhiPreview) << "pose array layer failed to attach for" << title;
+    poses_layer_.reset();
+    poses_sink_.reset();
+    return;
+  }
+  poses_layer_->setFixedFrame(QString::fromStdString(fixed_frame_));
+  qCInfo(lcRhiPreview) << "showing pose array topic" << title;
   view_->update();
 }
 

@@ -104,8 +104,22 @@ just (TF buffer, fixed frame, time) — no GL, no `ViewParams` — so any backen
 it. Every `render()` implementation calls it first, leaving the OpenGL path unchanged.
 
 
-**Done: point clouds. Remaining: meshes/URDF, scene entities, occupancy grid, voxel
-grid, poses-in-frame, depth cloud.**
+**Seams done for all layers except robot models. QRhi ADAPTERS done for point
+clouds, occupancy grids and pose arrays; markers and voxel grids still need theirs.**
+
+| Layer | Seam | QRhi adapter | Verified in-app |
+|---|---|---|---|
+| point cloud | `IPointCloudSink` | `RhiPointCloudSink` | yes, `/points` |
+| occupancy grid | `IOccupancyGridSink` | `RhiOccupancyGridSink` | yes, `/map` |
+| pose array | `IPosesSink` | `RhiPosesSink` | yes, `/poses` |
+| depth cloud | reuses `IPointCloudSink` | reuses the cloud one | no topic in the fixture |
+| scene entities | `IMarkerSink` | — | needs `MarkerArray` in the fixture |
+| voxel grid | `IVoxelGridSink` | — | impossible here: no ROS voxel message |
+| robot model | — | — | needs the GL pass reshaped first |
+
+Each verified adapter was checked by FALSIFICATION, not by looking: forcing its frame
+transform to identity must visibly move the content. Placement is the thing that
+looked fine and was wrong once already.
 
 The split point is not arbitrary — `PointCloudLayer`'s own header already named it:
 `pushCloud()` is *"the single point where a cloud reaches the GPU"*. Everything above

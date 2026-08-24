@@ -23,10 +23,12 @@ class TransformService;
 
 class OccupancyGridLayer;
 class PointCloudLayer;
+class PosesInFrameLayer;
 
 namespace rhi {
 class RhiOccupancyGridSink;
 class RhiPointCloudSink;
+class RhiPosesSink;
 class RhiSceneViewWidget;
 }  // namespace rhi
 
@@ -45,7 +47,7 @@ class RhiSceneViewWidget;
 /// releaseResources(). Better to find out before building seven layers on top.
 ///
 /// Scope: the TF overlay (axis triads + parent-connection lines), the reference
-/// grid, one point-cloud topic and one occupancy-grid topic. Both go through their
+/// grid, one point-cloud topic, one occupancy-grid topic and one pose-array topic. Both go through their
 /// sink seams — a real PointCloudLayer / OccupancyGridLayer does the decoding and its
 /// output is routed to the matching QRhi pass — so none of that machinery is
 /// reimplemented here. Meshes, markers, poses and voxel grids still need their
@@ -114,6 +116,8 @@ class Scene3DRhiPreviewDock : public QWidget, public PJ::IDataWidget {
   /// Attach an OccupancyGridLayer for `topic_id` and route it to the QRhi pass.
   /// Replaces any previously attached map: the preview shows one at a time.
   void adoptOccupancyTopic(PJ::ObjectTopicId topic_id, const QString& title);
+  /// Attach a PosesInFrameLayer for `topic_id` and route it to the QRhi pass.
+  void adoptPosesTopic(PJ::ObjectTopicId topic_id, const QString& title);
 
   rhi::RhiSceneViewWidget* view_ = nullptr;
   /// The one point-cloud topic on show, if any, plus the adapter binding it to the
@@ -123,6 +127,9 @@ class Scene3DRhiPreviewDock : public QWidget, public PJ::IDataWidget {
   /// The one occupancy-grid topic on show, if any. Sink must outlive the layer.
   std::unique_ptr<rhi::RhiOccupancyGridSink> map_sink_;
   std::unique_ptr<OccupancyGridLayer> map_layer_;
+  /// The one pose-array topic on show, if any. Sink must outlive the layer.
+  std::unique_ptr<rhi::RhiPosesSink> poses_sink_;
+  std::unique_ptr<PosesInFrameLayer> poses_layer_;
   TransformService* transform_service_ = nullptr;
   /// Held so a re-bind can drop the previous connection; see setTransformService.
   QMetaObject::Connection tf_ready_conn_;

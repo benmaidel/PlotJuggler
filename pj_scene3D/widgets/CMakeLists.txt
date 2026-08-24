@@ -21,6 +21,7 @@ set(PJ_SCENE3D_WIDGETS_SOURCES
   src/rhi/rhi_pointcloud_pass.cpp
   src/rhi/rhi_occupancy_grid_sink.cpp
   src/rhi/rhi_pointcloud_sink.cpp
+  src/rhi/rhi_poses_sink.cpp
   src/rhi/rhi_marker_pass.cpp
   src/rhi/rhi_mesh_pass.cpp
   src/rhi/rhi_occupancy_grid_pass.cpp
@@ -85,6 +86,7 @@ set(PJ_SCENE3D_WIDGETS_SOURCES
   include/pj_scene3d_widgets/rhi/rhi_pointcloud_pass.h
   include/pj_scene3d_widgets/rhi/rhi_occupancy_grid_sink.h
   include/pj_scene3d_widgets/rhi/rhi_pointcloud_sink.h
+  include/pj_scene3d_widgets/rhi/rhi_poses_sink.h
   include/pj_scene3d_widgets/rhi/rhi_marker_pass.h
   include/pj_scene3d_widgets/rhi/rhi_mesh_pass.h
   include/pj_scene3d_widgets/rhi/rhi_occupancy_grid_pass.h
