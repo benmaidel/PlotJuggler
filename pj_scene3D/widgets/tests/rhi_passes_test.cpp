@@ -456,6 +456,92 @@ TEST_F(RhiPassesTest, MeshPrimitiveDraws) {
   EXPECT_GT(nonBackgroundPixels(img), 100);
 }
 
+// Every link of a robot is placed by DrawCall::model ALONE — IMeshSink carries no
+// transform, because RobotModelLayer resolves per-link TF itself and bakes it into
+// the matrix. So a pass that ignored the per-draw model, or that shared one uniform
+// slot across draws instead of binding each draw's own dynamic offset, would collapse
+// an entire robot onto a single spot. That failure is not hypothetical: the marker
+// arrows collapsed to a point for exactly that reason (a uniform block whose per-draw
+// prefix was the wrong size), and it renders plenty of pixels — so MeshPrimitiveDraws
+// above, which only asserts that something drew, cannot see it.
+TEST_F(RhiPassesTest, MeshDrawsArePlacedIndependently) {
+  const auto boxAt = [](float x) {
+    RhiMeshPass::DrawCall draw;
+    draw.kind = RhiMeshPass::GeometryKind::kBox;
+    draw.model = glm::translate(glm::mat4(1.0F), glm::vec3(x, 0.0F, 0.0F));
+    draw.color = glm::vec4(0.85F, 0.25F, 0.20F, 1.0F);
+    draw.use_vertex_color = false;
+    return draw;
+  };
+
+  // Columns of the image that contain any drawn pixel. Column occupancy is enough
+  // to tell "two boxes side by side" from "two boxes on top of each other", and is
+  // immune to the shading differences that a centroid would pick up.
+  const auto occupiedColumns = [](const QImage& img) {
+    const int bg = static_cast<int>(std::lround(kBg * 255.0F));
+    std::vector<bool> cols(static_cast<std::size_t>(img.width()), false);
+    for (int y = 0; y < img.height(); ++y) {
+      for (int x = 0; x < img.width(); ++x) {
+        const QColor c = img.pixelColor(x, y);
+        if (std::abs(c.red() - bg) > 3 || std::abs(c.green() - bg) > 3 || std::abs(c.blue() - bg) > 3) {
+          cols[static_cast<std::size_t>(x)] = true;
+        }
+      }
+    }
+    return cols;
+  };
+  const auto span = [](const std::vector<bool>& cols) {
+    int lo = -1;
+    int hi = -1;
+    for (std::size_t i = 0; i < cols.size(); ++i) {
+      if (cols[i]) {
+        lo = lo < 0 ? static_cast<int>(i) : lo;
+        hi = static_cast<int>(i);
+      }
+    }
+    return lo < 0 ? 0 : (hi - lo) + 1;
+  };
+  // Whether a run of empty columns sits strictly between the leftmost and rightmost
+  // drawn column — i.e. the drawn pixels form two separated clusters.
+  const auto hasInteriorGap = [](const std::vector<bool>& cols) {
+    std::size_t lo = 0;
+    while (lo < cols.size() && !cols[lo]) {
+      ++lo;
+    }
+    std::size_t hi = cols.size();
+    while (hi > lo && !cols[hi - 1]) {
+      --hi;
+    }
+    for (std::size_t i = lo; i < hi; ++i) {
+      if (!cols[i]) {
+        return true;
+      }
+    }
+    return false;
+  };
+
+  RhiMeshPass one;
+  one.setVisualDraws({boxAt(0.0F)});
+  const QImage single = harness_.render({&one}, makeContext());
+  ASSERT_FALSE(single.isNull());
+  const std::vector<bool> single_cols = occupiedColumns(single);
+  const int single_span = span(single_cols);
+  ASSERT_GT(single_span, 0) << "the box drew nothing at the origin";
+  // Guards the gap detector itself: one box must read as ONE cluster, or a gap in
+  // the two-box case would prove nothing.
+  ASSERT_FALSE(hasInteriorGap(single_cols)) << "a single box already reads as two clusters";
+
+  RhiMeshPass two;
+  two.setVisualDraws({boxAt(-1.5F), boxAt(1.5F)});
+  const QImage pair = harness_.render({&two}, makeContext());
+  ASSERT_FALSE(pair.isNull());
+  const std::vector<bool> pair_cols = occupiedColumns(pair);
+
+  EXPECT_GT(span(pair_cols), single_span * 2)
+      << "two boxes 3 m apart cover barely more width than one: the per-draw model is being ignored";
+  EXPECT_TRUE(hasInteriorGap(pair_cols)) << "the two boxes drew as a single cluster: they share one model matrix";
+}
+
 TEST_F(RhiPassesTest, MarkerCubeDraws) {
   auto batch = std::make_shared<DecodedSceneEntities>();
   batch->frames = {"world"};
