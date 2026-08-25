@@ -16,6 +16,7 @@
 #include "pj_scene3d_widgets/gl/vertex_array.h"
 #include "pj_scene3d_widgets/mesh_data.h"
 #include "pj_scene3d_widgets/mesh_shading_params.h"
+#include "pj_scene3d_widgets/mesh_sink.h"
 #include "pj_scene3d_widgets/render_pass.h"
 
 class QImage;
@@ -49,23 +50,13 @@ enum class MaterialTextureSlot { kBaseColor, kMetallicRoughness, kNormal, kOcclu
 // GL pass for URDF/scene meshes. RobotModelLayer resolves TF and visual origins
 // into per-object DrawCalls; this pass owns shader compilation, CPU primitive
 // meshes, mesh-data upload, and the visual-vs-collision GL state.
-class MeshRenderPass : public IRenderPass {
+class MeshRenderPass : public IRenderPass, public IMeshSink {
  public:
-  enum class GeometryKind {
-    kMesh,
-    kBox,
-    kCylinder,
-    kSphere,
-    kPlaceholderCube,
-  };
-
-  struct DrawCall {
-    GeometryKind kind{GeometryKind::kPlaceholderCube};
-    std::string mesh_key;
-    glm::mat4 model{1.0f};
-    glm::vec4 color{0.7f, 0.7f, 0.7f, 1.0f};
-    bool use_vertex_color{true};
-  };
+  // The draw vocabulary moved to mesh_sink.h so a backend-agnostic layer can name
+  // it; these aliases keep every MeshRenderPass::GeometryKind / ::DrawCall call site
+  // compiling untouched.
+  using GeometryKind = MeshGeometryKind;
+  using DrawCall = MeshDrawCall;
 
   // One entry of the per-pass texture cache. The same source key may legally
   // appear twice — once sRGB, once linear — when one image serves both a color
@@ -111,10 +102,23 @@ class MeshRenderPass : public IRenderPass {
   // teardown is deferred to the next drawBatch()/releaseGL(), which run under the
   // owning context — so handles free in the right context instead of leaking or
   // deleting a sibling view's names.
-  void clearMeshes();
+  void clearMeshes() override;
   // Store/replace a keyed mesh's CPU data; the GL upload is deferred to the next
   // drawBatch() under a current context. Safe to call off the GL thread.
-  void setMeshData(const std::string& key, MeshData data);
+  void setMeshData(const std::string& key, MeshData data) override;
+
+  // Retain the draw lists for the argument-free render overloads below. Pushing is
+  // how a layer that caches its draws (RobotModelLayer, which rebuilds only when TF,
+  // the model or the render origin moves) hands them over; a layer that rebuilds its
+  // list every frame instead passes it straight to the explicit overloads and never
+  // calls these.
+  void setVisualDraws(std::vector<DrawCall> draws) override;
+  void setCollisionDraws(std::vector<DrawCall> draws) override;
+
+  // Render the lists last given to setVisualDraws()/setCollisionDraws(). Identical
+  // to the explicit overloads in every other respect.
+  void renderVisuals(const ViewParams& view_params, float opacity);
+  void renderCollisions(const ViewParams& view_params, float opacity);
 
   // Draw the opaque + translucent visual buckets. REQUIRES a current GL context
   // (call only from a layer's render()). Establishes its own blend state: opaque
@@ -159,6 +163,11 @@ class MeshRenderPass : public IRenderPass {
   [[nodiscard]] std::optional<GlNamesForTest> resourceGlNamesForTest(const std::string& key) const;
 
  private:
+  // Draw lists pushed through the IMeshSink seam, rendered by the argument-free
+  // overloads. Empty for a layer that uses the explicit ones.
+  std::vector<DrawCall> visual_draws_;
+  std::vector<DrawCall> collision_draws_;
+
   struct MeshResource {
     MeshData data;
     gl::VertexArray vao;

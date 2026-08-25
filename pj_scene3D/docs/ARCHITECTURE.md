@@ -104,8 +104,8 @@ just (TF buffer, fixed frame, time) — no GL, no `ViewParams` — so any backen
 it. Every `render()` implementation calls it first, leaving the OpenGL path unchanged.
 
 
-**Seams done for all layers except robot models. QRhi ADAPTERS done for point
-clouds, occupancy grids and pose arrays; markers and voxel grids still need theirs.**
+**Seams done for every layer. QRhi ADAPTERS done for point clouds, occupancy grids,
+pose arrays and markers; voxel grids and robot models still need theirs.**
 
 | Layer | Seam | QRhi adapter | Verified in-app |
 |---|---|---|---|
@@ -115,7 +115,11 @@ clouds, occupancy grids and pose arrays; markers and voxel grids still need thei
 | depth cloud | reuses `IPointCloudSink` | reuses the cloud one | no topic in the fixture |
 | scene entities | `IMarkerSink` | `RhiMarkerSink` | yes, `/markers` |
 | voxel grid | `IVoxelGridSink` | — | impossible here: no ROS voxel message |
-| robot model | — | — | needs the GL pass reshaped first |
+| robot model | `IMeshSink` | — | not in the fixture (no URDF topic) |
+
+`RhiMeshPass` already implements `IMeshSink` (it had all four calls verbatim), so the
+robot-model adapter is a binding, not a port. `SceneEntitiesLayer`'s `mesh_resource`
+models deliberately stay on the explicit-draws path — see IMeshSink below for why.
 
 Each verified adapter was checked by FALSIFICATION, not by looking: forcing its frame
 transform to identity must visibly move the content. Placement is the thing that
@@ -175,9 +179,9 @@ screenshot, and it was missed because the check was "is a cloud present" rather 
 one that proves least. `PointCloudHonoursItsModelMatrix` in `rhi_passes_test` now
 asserts placement mechanically, which is what should have been guarding it.
 
-### IMeshSink — the sketch (not yet implemented)
+### IMeshSink — the mesh seam
 
-Written on paper before committing to robot models, to answer one question: markers
+Sketched on paper before committing to robot models, to answer one question: markers
 needed a second placement shape after clouds/maps/poses needed a first, so does a
 mesh need a THIRD?
 
@@ -194,34 +198,60 @@ COST rather than by accident:
 
 So placement does not belong inside `I*Sink` after all: three shapes, each justified.
 
-The sink itself is small, and **`RhiMeshPass` already has exactly this shape** — the
-reshape falls entirely on the OpenGL side:
+As landed (`mesh_sink.h`), the interface is four calls — geometry in, draw lists in:
 
 ```cpp
 class IMeshSink {
   virtual void setMeshData(const std::string& key, MeshData data) = 0;
   virtual void clearMeshes() = 0;
-  virtual void setVisualDraws(std::vector<DrawCall> draws) = 0;
-  virtual void setCollisionDraws(std::vector<DrawCall> draws) = 0;
-  virtual void setShadingParams(const MeshShadingParams& params) = 0;
-  [[nodiscard]] virtual AABB worldBoundsOfDraws(const std::vector<DrawCall>&) = 0;
+  virtual void setVisualDraws(std::vector<MeshDrawCall> draws) = 0;
+  virtual void setCollisionDraws(std::vector<MeshDrawCall> draws) = 0;
 };
 ```
 
-Three things to know before starting:
+`RhiMeshPass` already had all four verbatim, so it only had to declare the base.
 
-1. **The one genuine reshape.** `MeshRenderPass::renderVisuals(view_params, draws,
-   opacity)` takes its data at RENDER time; the sink is state-push. So the GL pass has
-   to retain the draws and use them from its own `render()`. That is a behavioural
-   change to the shipping renderer, not a routing change — the reason robot models
-   were deferred while the other five layers were mechanical.
-2. **`MeshLoadSet::drain()` takes a concrete `MeshRenderPass&`** and calls
-   `setMeshData` on it. It needs re-typing to the interface — small, contained, but
-   easy to miss since it lives in `src/mesh_load_set.h` rather than with the layer.
-3. **The shadow path stays OUT of the seam.** `renderDepthOnly()` and
-   `meshShadowBounds()` exist for the shadow pre-pass, which has no QRhi counterpart.
-   They keep working through the existing `Scene3DLayer::renderShadowCasters()`
-   virtual, which is already OpenGL-only by design.
+**The review that preceded this corrected the sketch on two points**, both worth
+keeping because the sketch was confidently wrong about the shape of the work:
+
+1. **There are TWO `MeshRenderPass` owners, not one.** The sketch reasoned only about
+   `RobotModelLayer`; `SceneEntitiesLayer` owns one as well, for `mesh_resource`
+   markers. Only the robot was converted. The marker path builds its list fresh from
+   `frame_ctx` on every entry point every frame (`modelDrawCallsForFrame()`, no cache,
+   no dirty flag), so converting it to state-push would mean INTRODUCING a cache with
+   three invalidation sources — `entities_`, live TF, and `overrides_.color_override`.
+   Today it cannot go stale; a cache is precisely how it would start. The seam does not
+   need it (the QRhi preview draws marker primitives via `RhiMarkerSink`;
+   `mesh_resource` markers are out of scope there), so it keeps the explicit-draws
+   `renderVisuals(view_params, draws, opacity)` overload, which is retained for it.
+2. **The reshape was SMALLER than predicted, not a behavioural change.** The sketch
+   called retaining draws "a behavioural change to the shipping renderer". It is not:
+   `RobotModelLayer::ensureDrawCache()` already cached the lists, already tracked them
+   dirty, and was already called from all three entry points. Pushing on rebuild
+   renders exactly what the explicit overload rendered, because the cache only changes
+   on rebuild. `advance()` is a guard plus a call to it.
+
+**The trap, and what pins it.** Mesh layers have THREE per-frame entry points —
+`meshShadowBounds()`, `renderShadowCasters()`, `render()` — not one. `ensureDrawCache`
+exists precisely so a frame's shadow pre-pass and colour pass agree on one list; its
+own comment says so. Pushing from `render()` instead would compile, look correct in
+the viewport, and silently cast the PREVIOUS frame's geometry in shadow. So the push
+lives in `ensureDrawCache`, and
+`RobotModelLayerTest.DrawListsReachTheSinkFromEveryPerFrameEntryPoint` pins it by
+dirtying the cache and calling ONLY `meshShadowBounds()`. That assertion was
+falsified before being trusted: moving the push into `advance()` (rebuild-gated, so
+the other assertions still pass) makes it, and only it, fail.
+
+Note this makes the `advance()` contract's "every `render()` calls this first"
+necessary but NOT sufficient for a mesh layer — the shadow hooks must reach it too.
+
+Two smaller things, both as the sketch predicted: `MeshLoadSet::drain()` took a
+concrete `MeshRenderPass&` and was re-typed to `IMeshSink&` (easy to miss — it lives
+in `src/mesh_load_set.h`, not with the layer); and **the shadow path stays OUT of the
+seam** — `renderDepthOnly()` and `meshShadowBounds()` serve a pre-pass with no QRhi
+counterpart, so they keep working through the OpenGL-only
+`Scene3DLayer::renderShadowCasters()` virtual, reading the layer's own cached list
+rather than the sink's.
 
 ### Audit: what else is backend-specific?
 

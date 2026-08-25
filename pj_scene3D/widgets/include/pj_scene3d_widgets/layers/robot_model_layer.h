@@ -15,11 +15,12 @@
 #include "pj_datastore/object_store.hpp"
 #include "pj_scene3d_core/robot_model.h"
 #include "pj_scene3d_core/tf/transform.h"  // StampedTransform (cached fixed-joint bridges)
-// Needed in full (not forward-declared) because render() memoizes
-// std::vector<MeshRenderPass::DrawCall> members — a nested type that requires
-// the enclosing class to be complete. The header is public + self-contained
-// (it pulls mesh_data.h, no private src/ include), exactly as the sibling
-// scene_entities_layer.h already includes it.
+// Needed in full (not forward-declared) because the layer holds a
+// std::unique_ptr<MeshRenderPass> it calls through, and drives the OpenGL-only
+// shadow pre-pass on it. The header is public + self-contained (it pulls
+// mesh_data.h, no private src/ include), exactly as the sibling
+// scene_entities_layer.h already includes it. The draw vocabulary itself now
+// comes from mesh_sink.h.
 #include "pj_scene3d_widgets/passes/mesh_render_pass.h"
 #include "pj_scene3d_widgets/scene3d_layer.h"
 
@@ -90,6 +91,7 @@ class RobotModelLayer : public Scene3DLayer {
   void setVisible(bool visible) override;
 
   void initializeGL() override;
+  void advance(const FrameContext& frame_ctx) override;
   void render(const ViewParams& view_params, const FrameContext& frame_ctx) override;
   void releaseGL() override;
   // worldBounds(): inherits Scene3DLayer's std::nullopt default (this layer is
@@ -300,7 +302,23 @@ class RobotModelLayer : public Scene3DLayer {
   std::unique_ptr<UrdfPackageResolver> owned_resolver_;
   UrdfPackageResolver* resolver_{nullptr};
   std::unique_ptr<MeshLoader> mesh_loader_;
+  // The OpenGL pass this layer owns, and the sink its geometry + draw lists are
+  // routed to. The owned pass is the DEFAULT sink, which is what keeps the OpenGL
+  // path byte-identical: mesh data and draw lists go through sink(), while the
+  // render-context lifecycle (initializeGL / render / releaseGL), the shadow
+  // pre-pass and worldBoundsOfDraws stay on the concrete pass — all inherently
+  // backend-shaped, and the shadow path has no QRhi counterpart at all.
   std::unique_ptr<MeshRenderPass> mesh_pass_;
+  IMeshSink* sink_{nullptr};
+
+  // mesh_pass_ is constructed eagerly (never null), so this can return a reference.
+  [[nodiscard]] IMeshSink& sink() {
+    if (sink_ != nullptr) {
+      return *sink_;
+    }
+    return *mesh_pass_;
+  }
+
   // Async mesh loads keyed by resolved path. Held by unique_ptr so this header
   // can forward-declare MeshLoadSet (its definition lives in the private src/).
   std::unique_ptr<MeshLoadSet> mesh_loads_;
@@ -311,6 +329,15 @@ class RobotModelLayer : public Scene3DLayer {
   // fetch result is applied only if no newer load superseded it (source
   // switched, Retry pressed, layer detached).
   uint64_t url_fetch_generation_{0};
+
+ public:
+  /// Redirect this layer's mesh data and draw lists. nullptr restores the owned
+  /// OpenGL pass. Safe at any time; the next advance() re-pushes both draw lists,
+  /// but keyed mesh DATA already handed to the previous sink is not replayed —
+  /// call loadFromCurrentSource() if the new sink needs it.
+  void setSink(IMeshSink* sink) {
+    sink_ = sink;
+  }
 };
 
 }  // namespace pj::scene3d

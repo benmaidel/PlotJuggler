@@ -11,6 +11,7 @@
 
 #include "pj_scene3d_widgets/mesh_data.h"
 #include "pj_scene3d_widgets/mesh_shading_params.h"
+#include "pj_scene3d_widgets/mesh_sink.h"
 #include "pj_scene3d_widgets/passes/mesh_render_pass.h"  // GeometryKind / TextureColorSpace policy
 #include "pj_scene3d_widgets/rhi/rhi_render_pass.h"
 
@@ -41,7 +42,7 @@ namespace pj::scene3d::rhi {
 ///
 /// Not ported (tracked in docs/ARCHITECTURE.md): shadow receive and the "is-mesh"
 /// mask for EDL, both of which need passes that do not exist on QRhi yet.
-class RhiMeshPass final : public IRhiRenderPass {
+class RhiMeshPass final : public IRhiRenderPass, public IMeshSink {
  public:
   using GeometryKind = MeshRenderPass::GeometryKind;
   using DrawCall = MeshRenderPass::DrawCall;
@@ -56,16 +57,16 @@ class RhiMeshPass final : public IRhiRenderPass {
 
   /// Store or replace a keyed mesh's CPU data. GPU upload is deferred to the next
   /// prepare(), so this is safe to call from a decode thread.
-  void setMeshData(const std::string& key, MeshData data);
+  void setMeshData(const std::string& key, MeshData data) override;
 
   /// Forget every keyed mesh and cached texture. The GPU objects are destroyed on
   /// the next prepare()/release() rather than here, so this needs no live QRhi.
-  void clearMeshes();
+  void clearMeshes() override;
 
   /// The visual draws for this frame (URDF links, markers, primitives).
-  void setVisualDraws(std::vector<DrawCall> draws);
+  void setVisualDraws(std::vector<DrawCall> draws) override;
   /// The collision-hull overlay draws for this frame.
-  void setCollisionDraws(std::vector<DrawCall> draws);
+  void setCollisionDraws(std::vector<DrawCall> draws) override;
 
   /// Per-view look knobs; `mesh_opacity` / `collision_opacity` also decide which
   /// bucket a draw lands in.

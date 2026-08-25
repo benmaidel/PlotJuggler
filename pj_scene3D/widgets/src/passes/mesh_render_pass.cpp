@@ -500,6 +500,22 @@ void MeshRenderPass::renderDepthOnly(const glm::mat4& light_view_proj, const std
   }
 }
 
+void MeshRenderPass::setVisualDraws(std::vector<DrawCall> draws) {
+  visual_draws_ = std::move(draws);
+}
+
+void MeshRenderPass::setCollisionDraws(std::vector<DrawCall> draws) {
+  collision_draws_ = std::move(draws);
+}
+
+void MeshRenderPass::renderVisuals(const ViewParams& view_params, float opacity) {
+  renderVisuals(view_params, visual_draws_, opacity);
+}
+
+void MeshRenderPass::renderCollisions(const ViewParams& view_params, float opacity) {
+  renderCollisions(view_params, collision_draws_, opacity);
+}
+
 void MeshRenderPass::renderVisuals(const ViewParams& view_params, const std::vector<DrawCall>& draws, float opacity) {
   drawBatch(view_params, draws, opacity, false);
 }

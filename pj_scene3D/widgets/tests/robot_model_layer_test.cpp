@@ -26,6 +26,7 @@
 #include "pj_runtime/SessionManager.h"
 #include "pj_scene3d_core/tf/tf_buffer.h"
 #include "pj_scene3d_core/tf/transform.h"
+#include "pj_scene3d_widgets/mesh_sink.h"
 
 namespace {
 
@@ -886,6 +887,80 @@ TEST(RobotModelLayerTest, AutoModeAllCollisionModelPromotesToVisuals) {
 
   EXPECT_EQ(layer.visualDrawCountForTest(), 1) << "collision-only model promoted to visuals";
   EXPECT_EQ(layer.collisionDrawCountForTest(), 0);
+}
+
+// Records what a layer pushes through the IMeshSink seam.
+class RecordingMeshSink : public pj::scene3d::IMeshSink {
+ public:
+  void setMeshData(const std::string& key, pj::scene3d::MeshData /*data*/) override {
+    mesh_keys.push_back(key);
+  }
+  void clearMeshes() override {
+    ++clear_calls;
+  }
+  void setVisualDraws(std::vector<pj::scene3d::MeshDrawCall> draws) override {
+    visual = std::move(draws);
+    ++visual_pushes;
+  }
+  void setCollisionDraws(std::vector<pj::scene3d::MeshDrawCall> draws) override {
+    collision = std::move(draws);
+    ++collision_pushes;
+  }
+
+  std::vector<std::string> mesh_keys;
+  int clear_calls = 0;
+  int visual_pushes = 0;
+  int collision_pushes = 0;
+  std::vector<pj::scene3d::MeshDrawCall> visual;
+  std::vector<pj::scene3d::MeshDrawCall> collision;
+};
+
+// The draw lists must reach the sink from EVERY per-frame entry point, not just
+// render(). RobotModelLayer has three (meshShadowBounds, renderShadowCasters,
+// render) and they all funnel through ensureDrawCache precisely so a frame's shadow
+// pre-pass and colour pass agree on one list. Pushing from render() alone would
+// compile, look correct in the viewport, and silently cast the PREVIOUS frame's
+// geometry — so this pins the push to ensureDrawCache.
+TEST(RobotModelLayerTest, DrawListsReachTheSinkFromEveryPerFrameEntryPoint) {
+  PJ::SessionManager session;
+  const PJ::ObjectTopicId topic_id = registerTopic(session);
+  registerParser(session, topic_id, urdfParserVtable());
+  pushWireBytes(session, topic_id);
+
+  pj::scene3d::RobotModelLayer layer(topic_id, QStringLiteral("/robot_description"));
+  const auto ctx = makeContext(session);
+  ASSERT_TRUE(layer.attach(ctx));
+  ASSERT_NE(layer.robotModel(), nullptr);
+
+  RecordingMeshSink sink;
+  layer.setSink(&sink);
+
+  pj::scene3d::TransformBuffer live;
+  seedSceneChild(live, "base_link");
+  const std::string fixed_frame = "scene";
+  const pj::scene3d::FrameContext frame_ctx{live, fixed_frame, PJ::fromRaw(2000)};
+
+  layer.advance(frame_ctx);
+  EXPECT_EQ(sink.visual_pushes, 1);
+  EXPECT_EQ(sink.collision_pushes, 1);
+  EXPECT_EQ(sink.visual.size(), 1u) << "the URDF's one box visual must reach the sink";
+
+  // Nothing dirtied it, so a second advance must not re-push: the lists are
+  // unchanged, and copying them per frame is the cost the cache exists to avoid.
+  layer.advance(frame_ctx);
+  EXPECT_EQ(sink.visual_pushes, 1) << "clean advance re-pushed the draw lists";
+
+  // The invariant: a SHADOW entry point alone must bring the sink up to date.
+  layer.setTrackerTime(PJ::fromRaw(3000));
+  ASSERT_TRUE(layer.drawsDirtyForTest());
+  layer.meshShadowBounds(frame_ctx);
+  EXPECT_EQ(sink.visual_pushes, 2) << "the shadow pre-pass entry point did not refresh the sink";
+
+  // Unbinding restores the owned OpenGL pass; the sink must stop receiving.
+  layer.setSink(nullptr);
+  layer.setTrackerTime(PJ::fromRaw(4000));
+  layer.advance(frame_ctx);
+  EXPECT_EQ(sink.visual_pushes, 2) << "an unbound sink still received draws";
 }
 
 // Custom main: QFutureWatcher/UrlFetcher tests need an event loop, and the

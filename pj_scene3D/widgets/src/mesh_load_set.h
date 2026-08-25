@@ -5,7 +5,7 @@
 // Shared async-mesh-load bookkeeping for the layers that drive MeshLoader on a
 // background thread (RobotModelLayer, SceneEntitiesLayer). Both layers kick off
 // QFuture<MeshData> imports, watch them with a per-load QFutureWatcher, and on
-// completion drain the result into a MeshRenderPass + request a repaint. This
+// completion drain the result into an IMeshSink + request a repaint. This
 // helper owns that lifecycle once so the two layers stop duplicating the watcher
 // wiring, the exception-guarded result() drain (the H.9 defense-in-depth
 // barrier), and the completion bookkeeping.
@@ -22,7 +22,7 @@
 #include <utility>
 
 #include "pj_scene3d_widgets/mesh_data.h"
-#include "pj_scene3d_widgets/passes/mesh_render_pass.h"
+#include "pj_scene3d_widgets/mesh_sink.h"
 
 namespace pj::scene3d {
 
@@ -106,10 +106,10 @@ class MeshLoadSet {
 
   // Drain every finished, not-yet-consumed entry that carries a valid future:
   // exception-guarded future.result() (the single H.9 defense-in-depth barrier),
-  // push successful MeshData into `pass`, mark the entry consumed/failed, and on
+  // push successful MeshData into `sink`, mark the entry consumed/failed, and on
   // failure invoke `on_failure` (if provided). Entries with an invalid future
   // (a SceneEntities URL record still awaiting its bytes) are skipped.
-  DrainResult drain(MeshRenderPass& pass, const FailureCallback& on_failure = {}) {
+  DrainResult drain(IMeshSink& sink, const FailureCallback& on_failure = {}) {
     DrainResult result;
     for (auto& [key, entry] : entries_) {
       // A default-constructed QFuture reports finished but holds no result —
@@ -130,7 +130,7 @@ class MeshLoadSet {
       }
       entry.failed = !data.ok;
       if (data.ok) {
-        pass.setMeshData(key, std::move(data));
+        sink.setMeshData(key, std::move(data));
       } else {
         entry.error = data.error;  // surfaced by SceneEntitiesLayer's load-failure notice
         if (on_failure) {

@@ -317,7 +317,7 @@ void RobotModelLayer::detach() {
   draws_dirty_ = true;
   cached_render_origin_.reset();
   if (mesh_pass_) {
-    mesh_pass_->clearMeshes();
+    sink().clearMeshes();
   }
   ctx_ = {};
 }
@@ -493,18 +493,25 @@ void RobotModelLayer::render(const ViewParams& view_params, const FrameContext& 
   // follow); a pure view/projection repaint reuses it. Shared with the shadow
   // hooks via ensureDrawCache (which also drains finished mesh loads) so a frame's
   // pre-pass and color pass use one list built from the same geometry.
-  ensureDrawCache(frame_ctx);
+  advance(frame_ctx);
 
   // Per-view opacities (Part C "Meshes"/"Collision" sliders); 0 hides the group
   // entirely. These gates stay per-frame — only the draw list is cached. The
   // per-layer DisplayMode stays the structural override.
   const MeshShadingParams& shading = view_params.shading;
   if (shading.meshes_visible && shading.mesh_opacity > 0.0f) {
-    mesh_pass_->renderVisuals(view_params, cached_visual_draws_, shading.mesh_opacity);
+    mesh_pass_->renderVisuals(view_params, shading.mesh_opacity);
   }
   if (shading.collisions_visible && shading.collision_opacity > 0.0f) {
-    mesh_pass_->renderCollisions(view_params, cached_collision_draws_, shading.collision_opacity);
+    mesh_pass_->renderCollisions(view_params, shading.collision_opacity);
   }
+}
+
+void RobotModelLayer::advance(const FrameContext& frame_ctx) {
+  if (!visible_ || !mesh_pass_ || !model_.has_value()) {
+    return;
+  }
+  ensureDrawCache(frame_ctx);
 }
 
 void RobotModelLayer::ensureDrawCache(const FrameContext& frame_ctx) {
@@ -517,6 +524,14 @@ void RobotModelLayer::ensureDrawCache(const FrameContext& frame_ctx) {
   if (drawCacheNeedsRebuild(frame_ctx)) {
     rebuildDrawCache(frame_ctx);
     draws_dirty_ = false;
+    // Pushed HERE rather than from render(), because all three per-frame entry
+    // points funnel through this function — that is the whole reason it exists, and
+    // pushing from render() alone would leave the shadow pre-pass casting the
+    // previous frame's geometry. Pushed only on an actual rebuild: the lists are
+    // unchanged otherwise, and copying them every frame is the cost the cache exists
+    // to avoid.
+    sink().setVisualDraws(cached_visual_draws_);
+    sink().setCollisionDraws(cached_collision_draws_);
   }
 }
 
@@ -938,7 +953,7 @@ bool RobotModelLayer::loadFromCurrentSource() {
     mesh_loader_->clearCache();
   }
   if (mesh_pass_) {
-    mesh_pass_->clearMeshes();
+    sink().clearMeshes();
   }
 
   if (source_type_ == SourceType::kTopic) {
@@ -1112,7 +1127,7 @@ void RobotModelLayer::pollMeshLoads() {
   // Evict failed paths from the loader so a Retry re-imports instead of being
   // handed the cached failure forever (M.30).
   const MeshLoadSet::DrainResult drained =
-      mesh_loads_->drain(*mesh_pass_, [this](const std::string& key, const MeshLoadEntry&) {
+      mesh_loads_->drain(sink(), [this](const std::string& key, const MeshLoadEntry&) {
         if (mesh_loader_ != nullptr) {
           mesh_loader_->evict(QString::fromStdString(key));
         }

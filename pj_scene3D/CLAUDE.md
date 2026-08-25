@@ -215,9 +215,16 @@ the QRhi renderer inside the running app, in place of the real 3D dock: TF overl
 grid, and one point-cloud topic. The cloud goes through `IPointCloudSink`
 (`pointcloud_sink.h`) — a real `PointCloudLayer` decodes and `RhiPointCloudSink`
 routes its output to the QRhi pass, so the decode machinery is shared rather than
-duplicated per backend. Splitting the remaining six layer types the same way is what
-gates swapping the renderer under the real dock; see `docs/ARCHITECTURE.md` →
-"The layer decode/upload split".
+duplicated per backend. Every layer type now has its seam (`IMeshSink` was the last,
+for robot models); what gates swapping the renderer under the real dock is the
+remaining QRhi adapters plus the view-level API surface. See
+`docs/ARCHITECTURE.md` → "The layer decode/upload split".
+
+**Mesh layers have THREE per-frame entry points**, not one — `meshShadowBounds()`,
+`renderShadowCasters()` and `render()` — so the `advance()` contract's "every
+render() calls this first" is necessary but not sufficient there. `RobotModelLayer`
+pushes from `ensureDrawCache()`, which all three funnel through; pushing from
+`render()` would silently shadow-cast the previous frame's geometry.
 
 The QRhi/Metal port is covered by `tests/rhi_passes_test.cpp`, which renders each
 ported pass through an offscreen QRhi and the production HDR chain + composite. It
