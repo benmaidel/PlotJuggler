@@ -24,7 +24,7 @@ std::vector<GridVertex> buildCheckerboardCells(float extent_m, int divisions) {
   std::vector<GridVertex> vertices;
   const float half = extent_m * 0.5f;
   const float cell = extent_m / static_cast<float>(divisions);
-  vertices.reserve(static_cast<std::size_t>(divisions) * divisions * 6U);
+  vertices.reserve(static_cast<std::size_t>(divisions) * static_cast<std::size_t>(divisions) * 6U);
   for (int i = 0; i < divisions; ++i) {
     for (int j = 0; j < divisions; ++j) {
       // Every cell is emitted; parity selects which of the two tile tones the

@@ -387,7 +387,9 @@ std::optional<PJ::sdk::DepthImage> DepthCloudLayer::toDepthView(const Image& ima
     }
     scratch.resize(static_cast<size_t>(w) * static_cast<size_t>(h) * 2U);
     for (int y = 0; y < h; ++y) {
-      std::memcpy(scratch.data() + static_cast<size_t>(y) * w * 2U, png.constScanLine(y), static_cast<size_t>(w) * 2U);
+      std::memcpy(
+          scratch.data() + static_cast<size_t>(y) * static_cast<size_t>(w) * 2U, png.constScanLine(y),
+          static_cast<size_t>(w) * 2U);
     }
     view.width = static_cast<uint32_t>(w);
     view.height = static_cast<uint32_t>(h);

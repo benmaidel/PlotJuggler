@@ -953,8 +953,11 @@ TEST(RobotModelLayerTest, DrawListsReachTheSinkFromEveryPerFrameEntryPoint) {
   // The invariant: a SHADOW entry point alone must bring the sink up to date.
   layer.setTrackerTime(PJ::fromRaw(3000));
   ASSERT_TRUE(layer.drawsDirtyForTest());
-  layer.meshShadowBounds(frame_ctx);
+  const std::optional<pj::scene3d::AABB> shadow_bounds = layer.meshShadowBounds(frame_ctx);
   EXPECT_EQ(sink.visual_pushes, 2) << "the shadow pre-pass entry point did not refresh the sink";
+  // The caster bounds come from the same list that was just pushed, so a valid box
+  // here is what makes the push above meaningful rather than incidental.
+  EXPECT_TRUE(shadow_bounds.has_value() && shadow_bounds->valid) << "the box link cast no shadow bounds";
 
   // Unbinding restores the owned OpenGL pass; the sink must stop receiving.
   layer.setSink(nullptr);

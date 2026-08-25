@@ -76,7 +76,7 @@ TEST(PosesInFrameRenderTest, ArmOriginSitsAtPosePosition) {
   ASSERT_EQ(out.size(), 6U);
   const glm::vec4 origin{0.0f, 0.0f, 0.0f, 1.0f};
   for (int arm = 0; arm < 3; ++arm) {
-    const glm::vec4 p = apply(out[arm].model, origin);  // pose 0 at (1,2,3)
+    const glm::vec4 p = apply(out[static_cast<std::size_t>(arm)].model, origin);  // pose 0 at (1,2,3)
     EXPECT_NEAR(p.x, 1.0f, 1e-5f);
     EXPECT_NEAR(p.y, 2.0f, 1e-5f);
     EXPECT_NEAR(p.z, 3.0f, 1e-5f);

@@ -176,7 +176,7 @@ void EdlPass::renderEdl(const ViewParams& view_params) {
     std::array<glm::vec2, 8> values{};
     for (int i = 0; i < 8; ++i) {
       const float angle = 2.0f * std::numbers::pi_v<float> * static_cast<float>(i) / 8.0f;
-      values[i] = glm::vec2(std::cos(angle), std::sin(angle));
+      values[static_cast<std::size_t>(i)] = glm::vec2(std::cos(angle), std::sin(angle));
     }
     return values;
   }();

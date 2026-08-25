@@ -81,7 +81,7 @@ const std::vector<uint8_t>& barePngDepthBytes() {
     for (int y = 0; y < 2; ++y) {
       auto* line = reinterpret_cast<uint16_t*>(img.scanLine(y));
       for (int x = 0; x < 2; ++x) {
-        line[x] = static_cast<uint16_t>(kDepthsM[y * 2 + x] * 1000.0f);  // metres -> mm
+        line[x] = static_cast<uint16_t>(kDepthsM[static_cast<std::size_t>((y * 2) + x)] * 1000.0f);  // metres -> mm
       }
     }
     QByteArray png;

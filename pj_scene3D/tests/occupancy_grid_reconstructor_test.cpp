@@ -281,8 +281,8 @@ TEST(OccupancyGridReconstructorTest, DuplicateTimestampSnapshotBoundary) {
   // 64th update — where the stride-driven snapshot fires — falls mid-group.
   for (int i = 1; i <= 100; ++i) {
     const Timestamp ts = 1000 + 10 * ((i - 1) / 5 + 1);
-    const int32_t x = (i * 3) % (kGrid - 2);
-    const int32_t y = (i * 7) % (kGrid - 2);
+    const int32_t x = (i * 3) % (static_cast<int32_t>(kGrid) - 2);
+    const int32_t y = (i * 7) % (static_cast<int32_t>(kGrid) - 2);
     tl.updates.push_back(makeUpdate(ts, x, y, 2, 2, std::vector<uint8_t>(4, static_cast<uint8_t>(i))));
   }
   const auto bp = baseProviderFor(tl.bases);
