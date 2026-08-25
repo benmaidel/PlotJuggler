@@ -30,6 +30,7 @@ set(PJ_SCENE3D_WIDGETS_SOURCES
   src/rhi/rhi_present_pass.cpp
   src/rhi/rhi_tf_connections_pass.cpp
   src/rhi/rhi_voxel_grid_pass.cpp
+  src/rhi/rhi_voxel_grid_sink.cpp
   src/rhi/rhi_ssao_pass.cpp
   src/rhi/rhi_scene_view_widget.cpp
   src/gl/buffer.cpp
@@ -97,6 +98,7 @@ set(PJ_SCENE3D_WIDGETS_SOURCES
   include/pj_scene3d_widgets/rhi/rhi_present_pass.h
   include/pj_scene3d_widgets/rhi/rhi_tf_connections_pass.h
   include/pj_scene3d_widgets/rhi/rhi_voxel_grid_pass.h
+  include/pj_scene3d_widgets/rhi/rhi_voxel_grid_sink.h
   include/pj_scene3d_widgets/rhi/rhi_ssao_pass.h
   include/pj_scene3d_widgets/rhi/rhi_scene_view_widget.h
   include/pj_scene3d_widgets/hud_overlay.h
@@ -379,6 +381,20 @@ if(PJ_BUILD_TESTS)
   # targets it does NOT need OpenGL 4.5, so it actually runs on macOS/Metal — where
   # the GL-backed tests self-skip — which is the point: it is the only automated
   # check the QRhi renderer has on its primary development platform.
+  # Pure backend-mapping assertions for the QRhi voxel adapter. Links GuiPrivate for
+  # rhi/qrhi.h (reached through the pass header) but creates no QRhi and needs no GPU,
+  # so unlike rhi_passes_test it must never skip.
+  add_executable(rhi_voxel_grid_sink_test
+    tests/rhi_voxel_grid_sink_test.cpp
+  )
+  target_link_libraries(rhi_voxel_grid_sink_test PRIVATE
+    pj_scene3d_widgets
+    Qt6::GuiPrivate
+    GTest::gtest_main
+  )
+  target_compile_options(rhi_voxel_grid_sink_test PRIVATE ${PJ_WARNING_FLAGS} ${PJ_SANITIZER_FLAGS})
+  add_test(NAME rhi_voxel_grid_sink_test COMMAND rhi_voxel_grid_sink_test)
+
   add_executable(rhi_passes_test
     tests/rhi_passes_test.cpp
   )

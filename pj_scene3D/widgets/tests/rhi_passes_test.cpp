@@ -46,6 +46,7 @@
 #include "pj_scene3d_widgets/rhi/rhi_present_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_tf_connections_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_voxel_grid_pass.h"
+#include "pj_scene3d_widgets/rhi/rhi_voxel_grid_sink.h"
 
 namespace {
 
@@ -181,6 +182,24 @@ RhiFrameContext makeContext() {
   ctx.view_proj = proj * view;
   ctx.camera_pos_world = eye;
   return ctx;
+}
+
+// Horizontal centroid of every drawn pixel, or -1 when nothing drew. Coarse on
+// purpose: it answers "did the content move", which is what a placement bug breaks.
+double drawnCentroidX(const QImage& img) {
+  const int bg = static_cast<int>(std::lround(kBg * 255.0F));
+  double sum = 0.0;
+  double weight = 0.0;
+  for (int y = 0; y < img.height(); ++y) {
+    for (int x = 0; x < img.width(); ++x) {
+      const QColor c = img.pixelColor(x, y);
+      if (std::abs(c.red() - bg) > 3 || std::abs(c.green() - bg) > 3 || std::abs(c.blue() - bg) > 3) {
+        sum += x;
+        weight += 1.0;
+      }
+    }
+  }
+  return weight > 0.0 ? sum / weight : -1.0;
 }
 
 int nonBackgroundPixels(const QImage& img) {
@@ -441,6 +460,82 @@ TEST_F(RhiPassesTest, OccupancyGridDraws) {
   const QImage img = harness_.render({&occupancy}, makeContext());
   ASSERT_FALSE(img.isNull());
   EXPECT_GT(nonBackgroundPixels(img), 100);
+}
+
+// Voxel grids are the ONE layer whose placement cannot be checked in the running
+// app: no ROS message decodes to a VoxelGrid, so the screenshot fixture cannot carry
+// one and the falsification-by-identity check every other adapter got is unavailable.
+// This is the substitute, and it goes through RhiVoxelGridSink rather than the pass so
+// that the adapter's own model composition — fixed_from_source * grid origin — is what
+// gets verified. Both terms are exercised separately: either one silently dropped
+// leaves the grid sitting at the world origin, which looks perfectly fine.
+TEST_F(RhiPassesTest, VoxelGridSinkPlacesTheGridByFrameAndOrigin) {
+  const auto uploadAt = [](double origin_x) {
+    VoxelGridUpload upload;
+    upload.frame_id = "sensor";
+    upload.origin.position.x = origin_x;
+    upload.origin.orientation.w = 1.0;
+    upload.cell_size = glm::vec3(0.25F);
+    upload.column_count = 4;
+    upload.row_count = 4;
+    upload.slice_count = 4;
+    upload.kind = VoxelValueKind::kScalar;
+    upload.scalar.assign(4 * 4 * 4, 1.0F);
+    return upload;
+  };
+
+  RhiVoxelGridPass voxels;
+  RhiVoxelGridSink sink(voxels);
+  sink.setDrawMode(VoxelDrawMode::kAll);
+  sink.setAutoRange(false);
+  sink.setManualRange(0.0F, 1.0F);
+
+  sink.setGrid(uploadAt(0.0));
+  sink.setFrameTransform(glm::mat4(1.0F));
+  const QImage base = harness_.render({&voxels}, makeContext());
+  ASSERT_FALSE(base.isNull());
+  const double centre_base = drawnCentroidX(base);
+  ASSERT_GT(centre_base, 0.0) << "the grid drew nothing at the origin";
+
+  // (1) the FRAME transform must move it.
+  sink.setFrameTransform(glm::translate(glm::mat4(1.0F), glm::vec3(1.5F, 0.0F, 0.0F)));
+  const QImage framed = harness_.render({&voxels}, makeContext());
+  ASSERT_FALSE(framed.isNull());
+  const double centre_framed = drawnCentroidX(framed);
+  ASSERT_GT(centre_framed, 0.0) << "the grid drew nothing once its frame moved";
+  EXPECT_GT(std::abs(centre_framed - centre_base), 10.0)
+      << "setFrameTransform did not move the grid: the source frame is being ignored";
+
+  // (2) the grid's own ORIGIN pose must move it, independently of the frame.
+  sink.setFrameTransform(glm::mat4(1.0F));
+  sink.setGrid(uploadAt(1.5));
+  const QImage originated = harness_.render({&voxels}, makeContext());
+  ASSERT_FALSE(originated.isNull());
+  const double centre_originated = drawnCentroidX(originated);
+  ASSERT_GT(centre_originated, 0.0) << "the grid drew nothing with a translated origin";
+  EXPECT_GT(std::abs(centre_originated - centre_base), 10.0)
+      << "the grid origin pose is being dropped from the model matrix";
+}
+
+// An RGBA-valued grid is refused rather than approximated (RhiVoxelGridPass draws
+// scalars only). Collapsing it to a luminance scalar would render something
+// plausible and wrong, so an empty view is the honest outcome.
+TEST_F(RhiPassesTest, VoxelGridSinkRefusesRgbaFields) {
+  RhiVoxelGridPass voxels;
+  RhiVoxelGridSink sink(voxels);
+  VoxelGridUpload upload;
+  upload.origin.orientation.w = 1.0;
+  upload.cell_size = glm::vec3(0.25F);
+  upload.column_count = 4;
+  upload.row_count = 4;
+  upload.slice_count = 4;
+  upload.kind = VoxelValueKind::kRgba;
+  upload.rgba.assign(4 * 4 * 4 * 4, 200);
+  sink.setGrid(std::move(upload));
+
+  const QImage img = harness_.render({&voxels}, makeContext());
+  ASSERT_FALSE(img.isNull());
+  EXPECT_EQ(nonBackgroundPixels(img), 0) << "an RGBA voxel grid drew something; it should be refused outright";
 }
 
 TEST_F(RhiPassesTest, MeshPrimitiveDraws) {

@@ -104,8 +104,8 @@ just (TF buffer, fixed frame, time) — no GL, no `ViewParams` — so any backen
 it. Every `render()` implementation calls it first, leaving the OpenGL path unchanged.
 
 
-**Seams done for every layer. QRhi ADAPTERS done for point clouds, occupancy grids,
-pose arrays and markers; voxel grids and robot models still need theirs.**
+**Seams done for every layer, and QRhi adapters for all of them.** Robot models need
+no adapter class at all — `RhiMeshPass` implements `IMeshSink` directly.
 
 | Layer | Seam | QRhi adapter | Verified in-app |
 |---|---|---|---|
@@ -114,8 +114,8 @@ pose arrays and markers; voxel grids and robot models still need theirs.**
 | pose array | `IPosesSink` | `RhiPosesSink` | yes, `/poses` |
 | depth cloud | reuses `IPointCloudSink` | reuses the cloud one | no topic in the fixture |
 | scene entities | `IMarkerSink` | `RhiMarkerSink` | yes, `/markers` |
-| voxel grid | `IVoxelGridSink` | — | impossible here: no ROS voxel message |
-| robot model | `IMeshSink` | — | not in the fixture (no URDF topic) |
+| voxel grid | `IVoxelGridSink` | `RhiVoxelGridSink` | impossible here: no ROS voxel message |
+| robot model | `IMeshSink` | `RhiMeshPass` implements it | not in the fixture (no URDF topic) |
 
 `RhiMeshPass` already implements `IMeshSink` (it had all four calls verbatim), so the
 robot-model adapter is a binding, not a port. `SceneEntitiesLayer`'s `mesh_resource`
@@ -124,6 +124,23 @@ models deliberately stay on the explicit-draws path — see IMeshSink below for 
 Each verified adapter was checked by FALSIFICATION, not by looking: forcing its frame
 transform to identity must visibly move the content. Placement is the thing that
 looked fine and was wrong once already.
+
+The three that no fixture can reach are falsified OFFSCREEN instead, to the same
+standard rather than a weaker one:
+
+- **voxel grid** — `VoxelGridSinkPlacesTheGridByFrameAndOrigin` drives the real
+  adapter and moves the frame transform and the grid origin *independently*, because
+  dropping either one alone still leaves a grid sitting plausibly at the world origin.
+- **robot model** — `MeshDrawsArePlacedIndependently`: two boxes 3 m apart must leave
+  a gap between them. `DrawCall::model` is a mesh's only placement mechanism, so a
+  shared uniform slot would stack every link of a robot on one spot while still
+  drawing plenty of pixels.
+- **depth cloud** — reuses the point-cloud adapter, already covered by
+  `PointCloudHonoursItsModelMatrix`.
+
+Every one of these was confirmed to FAIL against a deliberate break before being
+trusted; a placement test that has never been falsified is indistinguishable from one
+that asserts presence.
 
 Markers are the one adapter whose placement is not a single transform. A batch's
 primitives are frame-local against an interned frame TABLE, so each entry resolves
