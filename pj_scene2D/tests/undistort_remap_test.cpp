@@ -140,7 +140,7 @@ DecodedFrame makeRgbFrame(int w, int h, uint8_t r, uint8_t g, uint8_t b) {
   f.height = h;
   f.format = PixelFormat::kRGB888;
   f.frame_id = "cam";
-  f.pixels = std::make_shared<std::vector<uint8_t>>(static_cast<size_t>(w) * h * 3);
+  f.pixels = std::make_shared<std::vector<uint8_t>>(static_cast<size_t>(w) * static_cast<size_t>(h) * 3);
   for (int i = 0; i < w * h; ++i) {
     (*f.pixels)[static_cast<size_t>(i) * 3 + 0] = r;
     (*f.pixels)[static_cast<size_t>(i) * 3 + 1] = g;
@@ -154,11 +154,11 @@ UndistortMap identityMap(int w, int h) {
   UndistortMap m;
   m.out_width = w;
   m.out_height = h;
-  m.src_x.resize(static_cast<size_t>(w) * h);
+  m.src_x.resize(static_cast<size_t>(w) * static_cast<size_t>(h));
   m.src_y.resize(m.src_x.size());
   for (int y = 0; y < h; ++y) {
     for (int x = 0; x < w; ++x) {
-      const size_t i = static_cast<size_t>(y) * w + x;
+      const size_t i = (static_cast<size_t>(y) * static_cast<size_t>(w)) + static_cast<size_t>(x);
       m.src_x[i] = static_cast<float>(x);
       m.src_y[i] = static_cast<float>(y);
     }
@@ -228,7 +228,8 @@ TEST(UndistortRemapTest, DifferentSourceSizeGivesDifferentSampling) {
   const auto big = computeUndistortMap(ci, 960, 640, static_cast<int>(ci.width), static_cast<int>(ci.height));
   ASSERT_TRUE(small.valid());
   ASSERT_TRUE(big.valid());
-  const size_t idx = static_cast<size_t>(big.out_height / 2) * big.out_width + big.out_width / 2;
+  const size_t idx = (static_cast<size_t>(big.out_height / 2) * static_cast<size_t>(big.out_width)) +
+                     static_cast<size_t>(big.out_width / 2);
   // The 2x-larger source maps the same output pixel to ~2x the source coordinate.
   EXPECT_NEAR(big.src_x[idx], small.src_x[idx] * 2.0F, 1.0F);
   EXPECT_NEAR(big.src_y[idx], small.src_y[idx] * 2.0F, 1.0F);
@@ -244,10 +245,10 @@ DecodedFrame makeGradientRgbFrame(int w, int h) {
   f.height = h;
   f.format = PixelFormat::kRGB888;
   f.frame_id = "cam";
-  f.pixels = std::make_shared<std::vector<uint8_t>>(static_cast<size_t>(w) * h * 3);
+  f.pixels = std::make_shared<std::vector<uint8_t>>(static_cast<size_t>(w) * static_cast<size_t>(h) * 3);
   for (int y = 0; y < h; ++y) {
     for (int x = 0; x < w; ++x) {
-      const size_t i = (static_cast<size_t>(y) * w + x) * 3;
+      const size_t i = ((static_cast<size_t>(y) * static_cast<size_t>(w)) + static_cast<size_t>(x)) * 3;
       (*f.pixels)[i + 0] = static_cast<uint8_t>((x * 255) / (w > 1 ? w - 1 : 1));
       (*f.pixels)[i + 1] = static_cast<uint8_t>((y * 255) / (h > 1 ? h - 1 : 1));
       (*f.pixels)[i + 2] = static_cast<uint8_t>((x + y) & 0xFF);

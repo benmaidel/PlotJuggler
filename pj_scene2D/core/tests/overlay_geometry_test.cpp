@@ -31,7 +31,7 @@ double extent(const std::vector<float>& v, int axis) {
   double lo = 1e18;
   double hi = -1e18;
   for (size_t i = 0; i + kStride <= v.size(); i += kStride) {
-    const double val = v[i + axis];
+    const double val = v[i + static_cast<std::size_t>(axis)];
     lo = std::min(lo, val);
     hi = std::max(hi, val);
   }

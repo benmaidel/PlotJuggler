@@ -19,9 +19,9 @@ std::array<float, 3> applyMatrix(const std::array<float, 16>& m, float y, float 
   for (int r = 0; r < 3; ++r) {
     float acc = 0.0f;
     for (int c = 0; c < 4; ++c) {
-      acc += m[c * 4 + r] * a[c];
+      acc += m[static_cast<std::size_t>((c * 4) + r)] * a[c];
     }
-    rgb[r] = acc;
+    rgb[static_cast<std::size_t>(r)] = acc;
   }
   return rgb;
 }

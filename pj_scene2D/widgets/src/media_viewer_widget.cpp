@@ -467,15 +467,15 @@ bool MediaViewerWidget::uploadDecodedFrameToTexture(
       rebuildLayerSrb(layer);
     }
 
-    QRhiTextureSubresourceUploadDescription y_desc(src, y_size);
+    QRhiTextureSubresourceUploadDescription y_desc(src, static_cast<quint32>(y_size));
     y_desc.setSourceSize(QSize(w, h));
     updates->uploadTexture(layer.tex_y, QRhiTextureUploadDescription({0, 0, y_desc}));
 
-    QRhiTextureSubresourceUploadDescription u_desc(src + y_size, uv_size);
+    QRhiTextureSubresourceUploadDescription u_desc(src + y_size, static_cast<quint32>(uv_size));
     u_desc.setSourceSize(QSize(uv_w, uv_h));
     updates->uploadTexture(layer.tex_u, QRhiTextureUploadDescription({0, 0, u_desc}));
 
-    QRhiTextureSubresourceUploadDescription v_desc(src + y_size + uv_size, uv_size);
+    QRhiTextureSubresourceUploadDescription v_desc(src + y_size + uv_size, static_cast<quint32>(uv_size));
     v_desc.setSourceSize(QSize(uv_w, uv_h));
     updates->uploadTexture(layer.tex_v, QRhiTextureUploadDescription({0, 0, v_desc}));
     return true;
@@ -509,11 +509,11 @@ bool MediaViewerWidget::uploadDecodedFrameToTexture(
       rebuildLayerSrb(layer);
     }
 
-    QRhiTextureSubresourceUploadDescription y_desc(src, y_size);
+    QRhiTextureSubresourceUploadDescription y_desc(src, static_cast<quint32>(y_size));
     y_desc.setSourceSize(QSize(w, h));
     updates->uploadTexture(layer.tex_y, QRhiTextureUploadDescription({0, 0, y_desc}));
 
-    QRhiTextureSubresourceUploadDescription uv_desc(src + y_size, uv_h * uv_row_bytes);
+    QRhiTextureSubresourceUploadDescription uv_desc(src + y_size, static_cast<quint32>(uv_h * uv_row_bytes));
     uv_desc.setSourceSize(QSize(uv_w, uv_h));
     updates->uploadTexture(layer.tex_u, QRhiTextureUploadDescription({0, 0, uv_desc}));
     return true;
@@ -550,10 +550,11 @@ bool MediaViewerWidget::uploadDecodedFrameToTexture(
     rgba_repack_buffer_.resize(static_cast<size_t>(w) * static_cast<size_t>(h) * 4U);
     const int pixel_count = w * h;
     for (int i = 0; i < pixel_count; ++i) {
-      rgba_repack_buffer_[i * 4 + 0] = src[i * 3 + (is_bgr ? 2 : 0)];
-      rgba_repack_buffer_[i * 4 + 1] = src[i * 3 + 1];
-      rgba_repack_buffer_[i * 4 + 2] = src[i * 3 + (is_bgr ? 0 : 2)];
-      rgba_repack_buffer_[i * 4 + 3] = 255;
+      const size_t out = static_cast<size_t>(i) * 4;
+      rgba_repack_buffer_[out + 0] = src[i * 3 + (is_bgr ? 2 : 0)];
+      rgba_repack_buffer_[out + 1] = src[i * 3 + 1];
+      rgba_repack_buffer_[out + 2] = src[i * 3 + (is_bgr ? 0 : 2)];
+      rgba_repack_buffer_[out + 3] = 255;
     }
     upload_data = rgba_repack_buffer_.data();
     upload_size = rgba_repack_buffer_.size();
@@ -716,7 +717,7 @@ bool MediaViewerWidget::createOverlayVbo(OverlayPipeline& overlay, size_t initia
     return false;
   }
   overlay.vbo_capacity = initial_capacity;
-  overlay.vbo = r->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, static_cast<int>(overlay.vbo_capacity));
+  overlay.vbo = r->newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::VertexBuffer, static_cast<quint32>(overlay.vbo_capacity));
   if (!overlay.vbo->create()) {
     destroyOverlayPipeline(overlay);
     return false;
@@ -772,11 +773,11 @@ void MediaViewerWidget::uploadOverlayVertexData(OverlayPipeline& overlay, QRhiRe
   if (needed > overlay.vbo_capacity) {
     overlay.vbo->destroy();
     overlay.vbo_capacity = std::max(needed * 2, overlay.vbo_capacity);
-    overlay.vbo->setSize(static_cast<int>(overlay.vbo_capacity));
+    overlay.vbo->setSize(static_cast<quint32>(overlay.vbo_capacity));
     overlay.vbo->create();
   }
   if (needed > 0) {
-    updates->updateDynamicBuffer(overlay.vbo, 0, static_cast<int>(needed), overlay.vertex_data.data());
+    updates->updateDynamicBuffer(overlay.vbo, 0, static_cast<quint32>(needed), overlay.vertex_data.data());
   }
 }
 

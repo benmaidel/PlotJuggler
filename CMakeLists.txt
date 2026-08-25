@@ -49,20 +49,6 @@ else()
         -Wall -Wextra -Werror -Wshadow -Wnon-virtual-dtor -Wold-style-cast
         -Wcast-qual -Wconversion -Woverloaded-virtual -Wpedantic
     )
-    # macOS bring-up: Apple Clang surfaces diagnostics GCC/Linux-Clang don't, and
-    # -Werror would turn each into a hard failure before the port is warning-clean.
-    # Keep the full -W set (so warnings are still visible) but non-fatal on Apple.
-    # Re-tighten (drop this branch) once the macOS build is warning-clean.
-    if(APPLE)
-        list(REMOVE_ITEM PJ_WARNING_FLAGS -Werror)
-        # Clang promotes -Winvalid-constexpr to a DEFAULT error, independent of
-        # -Werror (so the removal above doesn't cover it). The vendored nanocdr
-        # header trips it (getCurrentEndianness() type-puns a union — legal at
-        # runtime, never in a constant expression; GCC doesn't diagnose it).
-        # Downgrade it globally so vendored + our code build. Applies to all
-        # targets since it's a compiler-level default, not tied to PJ_WARNING_FLAGS.
-        add_compile_options(-Wno-invalid-constexpr)
-    endif()
 endif()
 
 # Keep frame pointers in all PJ4-owned targets so `perf record --call-graph fp`
@@ -101,6 +87,23 @@ add_subdirectory(pj_scripting)
 
 add_subdirectory(3rdparty/qwt/src)
 add_subdirectory(3rdparty/nanocdr)
+
+# Treat vendored headers as SYSTEM headers for everyone who consumes them, so their
+# diagnostics cannot fail OUR -Werror build. Without this, `-Wconversion` inside
+# qwt_series_data.h / nanocdr.hpp is attributed to whichever PJ file included it, and
+# no amount of casting in our code can silence it — the warning is in theirs.
+#
+# Done HERE rather than by editing the vendored CMakeLists: this is our policy about
+# code we do not own, and keeping the vendored trees pristine keeps re-syncing them
+# a copy rather than a merge. (`add_subdirectory(... SYSTEM)` would be tidier but
+# needs CMake 3.25; the floor here is 3.22.)
+foreach(vendored_target plotjuggler_qwt nanocdr)
+    get_target_property(_vendored_includes ${vendored_target} INTERFACE_INCLUDE_DIRECTORIES)
+    if(_vendored_includes)
+        set_target_properties(${vendored_target} PROPERTIES
+            INTERFACE_SYSTEM_INCLUDE_DIRECTORIES "${_vendored_includes}")
+    endif()
+endforeach()
 
 # Qt-Advanced-Docking submodule (PlotJuggler/Qt-Advanced-Docking-System fork
 # tracking upstream master + the Wayland fix on feature/wayland-fix). Pin the

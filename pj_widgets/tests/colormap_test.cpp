@@ -66,7 +66,9 @@ TEST(ColormapTest, LutMatchesColorForAndGrayscaleRowRamps) {
   constexpr int kWidth = 256;
   const std::vector<uint8_t> lut = buildColormapLut(kWidth);
   const auto toByte = [](float v) { return static_cast<uint8_t>(std::clamp(v, 0.0f, 1.0f) * 255.0f + 0.5f); };
-  const auto texel = [&](int row, int x) { return &lut[(static_cast<size_t>(row) * kWidth + x) * 4U]; };
+  const auto texel = [&](int row, int x) {
+    return &lut[((static_cast<size_t>(row) * kWidth) + static_cast<size_t>(x)) * 4U];
+  };
 
   // The turbo row (row 0) must equal colorFor(kTurbo, t) sampled across the row.
   for (int x : {0, 64, 128, 200, 255}) {

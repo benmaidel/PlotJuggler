@@ -34,8 +34,8 @@ PJ::ColorRGBA colorForClass(int32_t class_id) {
 
 uint32_t fnv1a32(std::string_view s) {
   uint32_t h = 0x811c9dc5u;
-  for (unsigned char c : s) {
-    h ^= c;
+  for (char c : s) {
+    h ^= static_cast<unsigned char>(c);
     h *= 0x01000193u;
   }
   return h;

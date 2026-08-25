@@ -1527,8 +1527,8 @@ TEST(NewPlotTrackerConfig, PlotInSecondTabInheritsGlobalTrackerParameter) {
   tabbed.setDataServices(&session, &catalog);
 
   const auto global_param = PJ::CurveTracker::kLineOnly;
-  const auto wire_docker = [global_param](PJ::PlotDocker* docker) {
-    QObject::connect(docker, &PJ::PlotDocker::plotWidgetAdded, docker, [global_param](PJ::PlotWidget* plot) {
+  const auto wire_docker = [](PJ::PlotDocker* docker) {
+    QObject::connect(docker, &PJ::PlotDocker::plotWidgetAdded, docker, [](PJ::PlotWidget* plot) {
       if (plot != nullptr) {
         plot->setTrackerParameter(global_param);
       }

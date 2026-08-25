@@ -129,8 +129,9 @@ std::optional<InspectorRgb> pixelRgbAt(const DecodedFrame& frame, int x, int y) 
         return std::nullopt;
       }
       return yuvToRgb(
-          data[index], data[y_size + uv_index], data[y_size + static_cast<size_t>(uv_w) * uv_h + uv_index],
-          frame.color_space, frame.color_range);
+          data[index], data[y_size + uv_index],
+          data[y_size + (static_cast<size_t>(uv_w) * static_cast<size_t>(uv_h)) + uv_index], frame.color_space,
+          frame.color_range);
     }
     case PixelFormat::kNV12: {
       const int uv_w = (frame.width + 1) / 2;

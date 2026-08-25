@@ -35,8 +35,26 @@ development. The helper scripts branch on `uname` via
   options; `build.sh` overrides them off on Darwin. Video decodes in software.
   VideoToolbox HW decode is a future opt-in (`ffmpeg/*:with_videotoolbox=True`)
   that `FfmpegDecoder` picks up at runtime with no C++ change.
-- **`-Werror`:** relaxed to non-fatal on Apple Clang during bring-up (it surfaces
-  diagnostics GCC doesn't); the full `-W…` set is still on. See root `CMakeLists.txt`.
+- **`-Werror` is fatal on macOS too**, exactly as on Linux — the bring-up-era
+  `if(APPLE)` branch that relaxed it is gone, and so is the global
+  `-Wno-invalid-constexpr` it carried. All 482 PJ-governed translation units are
+  warning-clean under Apple Clang.
+
+  Two things made that possible. Most sites were half-done casts —
+  `static_cast<size_t>(y) * w`, where one operand was cast and the next left to
+  convert implicitly. The rest lived in VENDORED headers (`qwt_series_data.h`,
+  `nanocdr.hpp`), where no cast in our code can help; those are now marked
+  `SYSTEM` from the root `CMakeLists.txt` (see the `vendored_target` loop), which
+  also removed the need for the global `-Winvalid-constexpr` suppression.
+
+  Note the flags are applied **per target**, so vendored targets compiling their own
+  sources never receive `-Werror`. Only PJ code is held to it.
+
+  `./check_werror.py` remains as a fallback for checking a subset without a full
+  build (`./check_werror.py pj_scene3D`); it replays `compile_commands.json` entries
+  with `-Werror` appended and the object discarded. It is Apple-Clang-accurate, not
+  GCC-accurate — a GCC-only diagnostic can still only be caught on Linux.
+
 - **The 3D view (`pj_scene3D`) is disabled on macOS for now.** Its renderer needs
   OpenGL 4.5 core + a compute shader, but Apple's OpenGL is frozen at 4.1 with no
   compute. `SceneViewWidget` detects this and shows an "unavailable" placeholder

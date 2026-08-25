@@ -3675,7 +3675,8 @@ QDomElement MainWindow::saveRightPanelState(QDomDocument& doc) const {
   if (width_button_group_ != nullptr) {
     const int id = width_button_group_->checkedId();
     if (id >= 0 && id < static_cast<int>(kWidthButtonSpecs.size())) {
-      element.setAttribute(QStringLiteral("width"), QString::number(kWidthButtonSpecs[id].second, 'g'));
+      element.setAttribute(
+          QStringLiteral("width"), QString::number(kWidthButtonSpecs[static_cast<std::size_t>(id)].second, 'g'));
     }
   }
 
@@ -3798,7 +3799,7 @@ void MainWindow::restoreRightPanelState(const QDomElement& element) {
     const double wanted = element.attribute(QStringLiteral("width")).toDouble(&ok);
     if (ok) {
       for (int i = 0; i < static_cast<int>(kWidthButtonSpecs.size()); ++i) {
-        if (qFuzzyCompare(kWidthButtonSpecs[i].second, wanted)) {
+        if (qFuzzyCompare(kWidthButtonSpecs[static_cast<std::size_t>(i)].second, wanted)) {
           checkGroupButton(width_button_group_, i);
           break;
         }
@@ -4476,8 +4477,8 @@ void MainWindow::buildLocalToolbar() {
   width_button_group_->setExclusive(true);
   const int initial_width_id = 0;
   for (int i = 0; i < static_cast<int>(kWidthButtonSpecs.size()); ++i) {
-    auto* btn =
-        curve_width_header_->parentWidget()->findChild<QToolButton*>(QString::fromLatin1(kWidthButtonSpecs[i].first));
+    auto* btn = curve_width_header_->parentWidget()->findChild<QToolButton*>(
+        QString::fromLatin1(kWidthButtonSpecs[static_cast<std::size_t>(i)].first));
     if (btn == nullptr) {
       continue;
     }
@@ -4585,7 +4586,7 @@ void MainWindow::applyActivePlotWidth(double width) {
   // becomes the width any curve added later inherits. Map the toolbar's pixel
   // value to the LineWidth enum it mirrors (kWidthButtonSpecs index == enum).
   for (int i = 0; i < static_cast<int>(kWidthButtonSpecs.size()); ++i) {
-    if (qFuzzyCompare(kWidthButtonSpecs[i].second, width)) {
+    if (qFuzzyCompare(kWidthButtonSpecs[static_cast<std::size_t>(i)].second, width)) {
       plot->setLineWidth(static_cast<LineWidth>(i));
       onUndoableChange();
       break;
