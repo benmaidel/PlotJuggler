@@ -466,6 +466,23 @@ Two bypasses decide which pixels get the filmic look:
 
 - **Far-plane background**, via the resolved depth buffer. Grading the background
   would shift the theme colour.
+
+  **Not used on the OpenGL backend.** QRhi reports `ResolveDepthStencil` supported
+  there and accepts the resolve target, but the resolved texture does not read back
+  as far-plane depth — so the bypass silently never fires and the background is
+  graded: `sRGB(tonemap(lin(0.96)))` lands at 236 instead of the theme's 245.
+  `RhiPresentPass` therefore keys `depth_bypass_usable_` off the BACKEND rather than
+  the feature bit, and OpenGL falls back to the alpha marker below, which produces
+  the correct background (verified on llvmpipe).
+
+  The cost is real but small: with the alpha clear at 0, translucent data drawn over
+  the background grades slightly differently than on Metal. The evidence only covers
+  llvmpipe, so a real GPU whose GL driver *does* resolve depth correctly loses the
+  better path unnecessarily. Narrowing it means probing the resolve at runtime rather
+  than trusting either the feature bit or the backend enum — more machinery than the
+  difference currently justifies. `FarPlaneAndAlphaBypassAgree` pins the invariant
+  that both mechanisms yield the same background, so whichever one a backend takes,
+  a regression in it is caught.
 - **Per-pixel annotation marker**, carried in the HDR target's ALPHA channel. This
   is the subtle one: in that target alpha is *not* opacity. Data pixels drive it to
   1 and take the filmic look; annotation geometry (TF triads, TF connection lines,

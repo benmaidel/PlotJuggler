@@ -61,6 +61,9 @@ bool RhiPresentPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd, int sa
   release();
   rhi_ = &rhi;
   sample_count_ = sample_count;
+  // See depth_bypass_usable_: the OpenGL backend accepts a depth resolve it does not
+  // actually deliver, so the primary background bypass must not be used there.
+  depth_bypass_usable_ = rhi.backend() != QRhi::OpenGLES2;
 
   const QShader vert = loadBakedShader(QStringLiteral(":/scene3d_shaders/present.vert.qsb"));
   const QShader frag = loadBakedShader(QStringLiteral(":/scene3d_shaders/present.frag.qsb"));
@@ -188,7 +191,7 @@ void RhiPresentPass::prepare(QRhiResourceUpdateBatch& updates, const RhiFrameCon
   ubo.flip_v = flip_v_ ? 1.0F : 0.0F;
   ubo.tonemap_mode = params_.tonemap_mode;
   ubo.saturation = params_.saturation;
-  ubo.has_depth = depth_ != nullptr ? 1.0F : 0.0F;
+  ubo.has_depth = (depth_ != nullptr && depth_bypass_usable_) ? 1.0F : 0.0F;
   ubo.has_ao = ao_ != nullptr ? 1.0F : 0.0F;
   ubo.ao_strength = params_.ao_strength;
   updates.updateDynamicBuffer(ubo_, 0, sizeof(PresentUbo), &ubo);

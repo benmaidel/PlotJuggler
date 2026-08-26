@@ -22,20 +22,18 @@
 // be created (a headless box with no GL and no Metal).
 
 #include <gtest/gtest.h>
-
-#include <QOpenGLContext>
-#include <QSurfaceFormat>
-#include <string>
 #include <rhi/qrhi.h>
 
 #include <QGuiApplication>
 #include <QImage>
 #include <QOffscreenSurface>
+#include <QOpenGLContext>
 #include <QSurfaceFormat>
 #include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
 #include <memory>
 #include <set>
+#include <string>
 #include <vector>
 
 #include "gtest_skip_exit.h"
@@ -136,6 +134,12 @@ class Harness {
     return present_;
   }
 
+  /// Force the composite onto its alpha-marker background bypass by withholding the
+  /// resolved depth, as if QRhi::ResolveDepthStencil were unsupported.
+  void setSuppressDepthBypass(bool suppress) {
+    suppress_depth_bypass_ = suppress;
+  }
+
   /// Render `passes` through the HDR chain and composite. Returns the RGBA8 result,
   /// or a null image when the chain or a readback failed.
   QImage render(const std::vector<IRhiRenderPass*>& passes, const RhiFrameContext& ctx_in, int samples = 4) {
@@ -154,7 +158,9 @@ class Harness {
       }
     }
     present_.setSourceTexture(hdr_.resolvedColor());
-    present_.setDepthTexture(hdr_.resolvedDepth());
+    // Suppressing the binding is how FarPlaneAndAlphaBypassAgree exercises the
+    // fallback path; everything else takes the resolved depth the widget takes.
+    present_.setDepthTexture(suppress_depth_bypass_ ? nullptr : hdr_.resolvedDepth());
 
     QRhiCommandBuffer* cb = nullptr;
     if (rhi_->beginOffscreenFrame(&cb) != QRhi::FrameOpSuccess) {
@@ -199,6 +205,7 @@ class Harness {
   }
 
  private:
+  bool suppress_depth_bypass_ = false;
   std::string unsupported_reason_;
   std::unique_ptr<QOffscreenSurface> surface_;
   std::unique_ptr<QRhi> rhi_;
@@ -223,8 +230,19 @@ RhiFrameContext makeContext() {
 
 // Horizontal centroid of every drawn pixel, or -1 when nothing drew. Coarse on
 // purpose: it answers "did the content move", which is what a placement bug breaks.
+// The background the image ACTUALLY has, read from a corner. Deliberately not the
+// kBg constant: if the composite mis-grades the background (as happens when the
+// far-plane bypass fails), every helper keyed to the constant reports that every
+// pixel is "drawn" — and the placement tests below then fail with confident messages
+// blaming the model matrix, which is not what broke. Calibrating per image keeps a
+// background bug reported by BackgroundRoundTripsExactly alone, where it belongs.
+int backgroundLevel(const QImage& img) {
+  const QColor corner = img.pixelColor(0, 0);
+  return std::max({corner.red(), corner.green(), corner.blue()});
+}
+
 double drawnCentroidX(const QImage& img) {
-  const int bg = static_cast<int>(std::lround(kBg * 255.0F));
+  const int bg = backgroundLevel(img);
   double sum = 0.0;
   double weight = 0.0;
   for (int y = 0; y < img.height(); ++y) {
@@ -240,7 +258,7 @@ double drawnCentroidX(const QImage& img) {
 }
 
 int nonBackgroundPixels(const QImage& img) {
-  const int bg = static_cast<int>(std::lround(kBg * 255.0F));
+  const int bg = backgroundLevel(img);
   int n = 0;
   for (int y = 0; y < img.height(); ++y) {
     for (int x = 0; x < img.width(); ++x) {
@@ -310,6 +328,42 @@ TEST_F(RhiPassesTest, BackgroundRoundTripsExactly) {
 // that they draw at all (a uniform block smaller than the shader reads collapsed
 // every arrow to a degenerate point during the port), and that their colour does
 // not move when the tonemap operator changes.
+// The composite has TWO ways to keep the background out of the tonemap: the
+// far-plane depth bypass (primary, needs a resolved depth texture) and the
+// alpha-marker path (fallback, used when QRhi cannot resolve depth). They must agree
+// — they exist to produce the same background, and the choice between them is an
+// implementation detail of what the backend supports.
+//
+// This is the assertion that isolates a backend where the depth resolve is ACCEPTED
+// but does not read back as far-plane depth. That is not hypothetical: QRhi reports
+// ResolveDepthStencil supported on the OpenGL backend, so the primary path is chosen
+// and silently fails, and the background gets graded — sRGB(tonemap(lin(0.96))) lands
+// around 236 instead of the theme's 245. Without this test the symptom appears in
+// BackgroundRoundTripsExactly with no indication of WHICH mechanism broke.
+TEST_F(RhiPassesTest, FarPlaneAndAlphaBypassAgree) {
+  RhiGridPass grid;
+
+  harness_.setSuppressDepthBypass(false);
+  const QImage with_depth = harness_.render({&grid}, makeContext());
+  ASSERT_FALSE(with_depth.isNull());
+
+  harness_.setSuppressDepthBypass(true);
+  const QImage with_alpha = harness_.render({&grid}, makeContext());
+  ASSERT_FALSE(with_alpha.isNull());
+  harness_.setSuppressDepthBypass(false);
+
+  const int depth_bg = backgroundLevel(with_depth);
+  const int alpha_bg = backgroundLevel(with_alpha);
+  const int expected = static_cast<int>(std::lround(kBg * 255.0F));
+
+  EXPECT_NEAR(alpha_bg, expected, 1) << "the alpha-marker bypass did not preserve the background";
+  EXPECT_NEAR(depth_bg, expected, 1)
+      << "the far-plane depth bypass did not preserve the background: this backend accepts a resolved "
+         "depth texture that does not read back as far-plane depth, so RhiPresentPass must not trust "
+         "QRhi::ResolveDepthStencil here and should fall back to the alpha clear";
+  EXPECT_NEAR(depth_bg, alpha_bg, 1) << "the two background-bypass mechanisms disagree";
+}
+
 TEST_F(RhiPassesTest, AxisTriadsDrawAndBypassTheTonemap) {
   RhiAxisPass axis;
   axis.setFrames({glm::mat4(1.0F)});
@@ -610,7 +664,7 @@ TEST_F(RhiPassesTest, MeshDrawsArePlacedIndependently) {
   // to tell "two boxes side by side" from "two boxes on top of each other", and is
   // immune to the shading differences that a centroid would pick up.
   const auto occupiedColumns = [](const QImage& img) {
-    const int bg = static_cast<int>(std::lround(kBg * 255.0F));
+    const int bg = backgroundLevel(img);
     std::vector<bool> cols(static_cast<std::size_t>(img.width()), false);
     for (int y = 0; y < img.height(); ++y) {
       for (int x = 0; x < img.width(); ++x) {

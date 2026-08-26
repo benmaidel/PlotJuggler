@@ -72,7 +72,7 @@ class RhiPresentPass final : public IRhiRenderPass {
   /// clear alpha should be 1, which is what keeps translucent data drawn over the
   /// background fully graded.
   [[nodiscard]] bool backgroundNeedsAlphaClear() const {
-    return depth_ == nullptr;
+    return depth_ == nullptr || !depth_bypass_usable_;
   }
 
  private:
@@ -105,6 +105,15 @@ class RhiPresentPass final : public IRhiRenderPass {
   QRhiGraphicsPipeline* pipeline_ = nullptr;
   QRhiTexture* source_ = nullptr;
   QRhiTexture* depth_ = nullptr;
+  /// Whether the far-plane depth bypass can be TRUSTED on this backend, as opposed
+  /// to merely being offered. QRhi reports ResolveDepthStencil supported on OpenGL
+  /// and accepts the resolve target, but the resolved texture does not read back as
+  /// far-plane depth there, so the bypass silently never fires and the background
+  /// gets tonemapped (observed on llvmpipe: the 0.96 theme background composites to
+  /// 236 instead of 245). Set from the backend in initialize(); when false the host
+  /// clears alpha to 0 and the marker path handles the background instead.
+  /// FarPlaneAndAlphaBypassAgree in rhi_passes_test guards both mechanisms.
+  bool depth_bypass_usable_ = true;
   QRhiTexture* ao_ = nullptr;
   bool bindings_dirty_ = true;
   CompositeParams params_;
