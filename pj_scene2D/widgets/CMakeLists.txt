@@ -70,8 +70,10 @@ target_link_libraries(pj_scene2d_widgets
 # until someone remembered to re-run `qsb` by hand, and (b) the image shaders
 # shipped a GLSL-440-only pack — unusable on macOS, whose OpenGL is frozen at 4.1.
 #
-# Targets: GLSL 410 + 440 for the OpenGL backend (410 is what a macOS GL context
-# could offer; 440 matches the source level on desktop Linux) and MSL 12 for
+# Targets: GLSL 400 + 410 + 440 for the OpenGL backend (410 is what a macOS GL
+# context could offer, 440 matches the source level on desktop Linux, and 400 is the
+# floor for older/VM drivers that report OpenGL 4.0 — with no matching variant QRhi
+# fails every pipeline and the viewer just draws nothing) and MSL 12 for
 # Metal. HLSL is deliberately NOT requested: nothing uses the D3D backends, and
 # `scene_text.frag` does not survive HLSL translation, which would fail the build.
 #
@@ -81,7 +83,7 @@ target_link_libraries(pj_scene2d_widgets
 qt6_add_shaders(pj_scene2d_widgets "shaders"
   PREFIX "/shaders"
   BASE "shaders"
-  GLSL "410,440"
+  GLSL "400,410,440"
   MSL 12
   FILES
     shaders/yuv_to_rgb.vert

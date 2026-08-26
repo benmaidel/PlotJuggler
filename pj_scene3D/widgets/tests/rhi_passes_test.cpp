@@ -22,6 +22,10 @@
 // be created (a headless box with no GL and no Metal).
 
 #include <gtest/gtest.h>
+
+#include <QOpenGLContext>
+#include <QSurfaceFormat>
+#include <string>
 #include <rhi/qrhi.h>
 
 #include <QGuiApplication>
@@ -63,7 +67,20 @@ constexpr float kBg = 0.96F;
 /// harness that composited differently would not test the thing that keeps breaking.
 class Harness {
  public:
-  /// False when no backend is available — the caller should GTEST_SKIP().
+#if !defined(Q_OS_MACOS)
+  /// Lowest GLSL target in the qt6_add_shaders bake; keep in sync with CMakeLists.
+  /// Only meaningful for the OpenGL backend — Metal takes the MSL variant.
+  static constexpr int kMinBakedGlslVersion = 400;
+#endif
+
+  /// Why this environment cannot run the suite; empty when it can. Non-empty only
+  /// after create() returned false.
+  [[nodiscard]] const std::string& unsupportedReason() const {
+    return unsupported_reason_;
+  }
+
+  /// False when no backend is available, or when the context is too old to have a
+  /// baked shader variant — the caller should GTEST_SKIP().
   bool create() {
 #if defined(Q_OS_MACOS)
     QRhiMetalInitParams params;
@@ -79,8 +96,27 @@ class Harness {
     rhi_.reset(QRhi::create(QRhi::OpenGLES2, &params));
 #endif
     if (rhi_ == nullptr) {
+      unsupported_reason_ = "no QRhi backend available offscreen";
       return false;
     }
+#if !defined(Q_OS_MACOS)
+    // A context below the LOWEST baked GLSL target matches no shader variant, so
+    // every pipeline fails to create and every test renders a null image. That looks
+    // like fourteen broken tests rather than one unsupported driver, which is exactly
+    // the false signal SKIP_RETURN_CODE exists to prevent — so detect it up front.
+    // Checked against the bake targets in CMakeLists (qt6_add_shaders GLSL "400,...").
+    if (const auto* gl = static_cast<const QRhiGles2NativeHandles*>(rhi_->nativeHandles());
+        gl != nullptr && gl->context != nullptr) {
+      const QSurfaceFormat fmt = gl->context->format();
+      const int glsl_version = (fmt.majorVersion() * 100) + (fmt.minorVersion() * 10);
+      if (glsl_version < kMinBakedGlslVersion) {
+        unsupported_reason_ = "OpenGL " + std::to_string(fmt.majorVersion()) + "." +
+                              std::to_string(fmt.minorVersion()) + " is below the GLSL " +
+                              std::to_string(kMinBakedGlslVersion) + " floor the shaders are baked for";
+        return false;
+      }
+    }
+#endif
     // The composite target: RGBA8 so a readback needs no half-float conversion,
     // which is also what the widget's own target is.
     out_tex_.reset(rhi_->newTexture(QRhiTexture::RGBA8, QSize(kW, kH), 1, QRhiTexture::RenderTarget));
@@ -163,6 +199,7 @@ class Harness {
   }
 
  private:
+  std::string unsupported_reason_;
   std::unique_ptr<QOffscreenSurface> surface_;
   std::unique_ptr<QRhi> rhi_;
   std::unique_ptr<QRhiTexture> out_tex_;
@@ -235,7 +272,7 @@ class RhiPassesTest : public ::testing::Test {
  protected:
   void SetUp() override {
     if (!harness_.create()) {
-      GTEST_SKIP() << "no QRhi backend available offscreen";
+      GTEST_SKIP() << harness_.unsupportedReason();
     }
   }
   Harness harness_;

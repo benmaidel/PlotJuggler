@@ -148,6 +148,33 @@ Prefer these over hand-rolled equivalents. Names are exact.
 - **XRender X11 native painting engine removed (6.11)** — only relevant if built
   with `-xcb-native-painting`. PJ4 isn't; no action.
 
+## QRhi shader baking: always bake a GLSL floor
+
+`qt6_add_shaders` bakes one `.qsb` pack holding several variants. At runtime QRhi's
+OpenGL backend asks the context which GLSL versions it accepts and picks the highest
+match. **With no match, every pipeline fails to create and the renderer simply draws
+nothing** — you get blank output or null images, never a message naming the driver.
+The only clue is a `qDebug` line like:
+
+```
+No GLSL shader code found (versions tried: QList(400, 330, 150, 140, 130, 120))
+in baked shader QShader(... ShaderKey(1 Version(410)), ShaderKey(1 Version(440)) ...)
+```
+
+Read it as: *the context tops out at GLSL 4.00, the pack starts at 4.10, so nothing
+loads.* This cost a debugging round-trip when both scene modules baked `410,440` —
+410 having been chosen for macOS's 4.1 ceiling, which silently excluded every driver
+BELOW 4.1. Virtualised GPUs (Parallels, some VMs and remote desktops) commonly report
+exactly OpenGL 4.0 and fall into that hole.
+
+Both modules now bake `400,410,440`. All PJ shaders cross-compile to 400 cleanly, so
+the floor is free — and worth keeping free: prefer lowering the floor over raising the
+requirement, because the failure is invisible at the call site.
+
+Anything that probes for a usable QRhi should check the context version against that
+floor, not just that a backend exists — `pj_scene3D/widgets/tests/rhi_passes_test.cpp`
+does this and reports SKIPPED, instead of fourteen tests failing for one reason.
+
 ## Build / toolchain floors (don't trip on these)
 
 - **CMake ≥ 3.22** required by Qt since 6.9. PJ4 keeps `cmake_minimum_required` at

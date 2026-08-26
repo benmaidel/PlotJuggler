@@ -166,10 +166,16 @@ target_link_libraries(pj_scene3d_widgets
 # Naming the resource `scene3d_shaders` keeps it distinct from pj_scene2D's
 # `shaders` resource; both are STATIC libraries linked into the same binary, so
 # colliding resource names would collide their Q_INIT_RESOURCE symbols.
+# GLSL 400 is the FLOOR, not a nicety: QRhi's OpenGL backend asks the context which
+# versions it accepts and picks the highest match. With no match every pipeline fails
+# to create and the renderer silently draws nothing — the failure surfaces as blank
+# output, never as "your driver is too old". 410 was chosen for macOS's 4.1 ceiling,
+# which left anything BELOW 4.1 (VM drivers commonly report 4.0) with no variant at
+# all. Every shader here cross-compiles to 400 cleanly, so the floor costs nothing.
 qt6_add_shaders(pj_scene3d_widgets "scene3d_shaders"
   PREFIX "/scene3d_shaders"
   BASE "shaders"
-  GLSL "410,440"
+  GLSL "400,410,440"
   MSL 12
   FILES
     shaders/rhi_probe.vert

@@ -231,6 +231,14 @@ ported pass through an offscreen QRhi and the production HDR chain + composite. 
 does NOT need OpenGL 4.5, so unlike the `*_gl_test` targets it actually runs on
 macOS/Metal.
 
+It does need a context that matches a **baked GLSL variant**: the packs are baked
+`400,410,440` (see `qt6_add_shaders` in `widgets/CMakeLists.txt`), and QRhi's OpenGL
+backend loads nothing at all if the context is below the floor — every pipeline then
+fails and every test renders a null image. The harness checks the context version up
+front and reports SKIPPED rather than letting one unsupported driver look like
+fourteen broken tests. **Lower the floor rather than raising it**: the failure is
+invisible at the call site. See `docs/QT_NOTES.md` -> "QRhi shader baking".
+
 **Render-backed suites report SKIPPED, not passed**, when no usable context exists —
 via `SKIP_RETURN_CODE 77` plus `tests/gtest_skip_exit.h`. Without that they exited 0
 and ctest counted them among the passing tests, so a green "243 passed" on macOS said
