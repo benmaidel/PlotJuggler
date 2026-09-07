@@ -31,6 +31,7 @@
 #include <QSurfaceFormat>
 #include <cmath>
 #include <glm/gtc/matrix_transform.hpp>
+#include <limits>
 #include <memory>
 #include <set>
 #include <string>
@@ -44,6 +45,7 @@
 #include "pj_scene3d_widgets/rhi/rhi_marker_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_mesh_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_occupancy_grid_pass.h"
+#include "pj_scene3d_widgets/rhi/rhi_pointcloud_aabb_reducer.h"
 #include "pj_scene3d_widgets/rhi/rhi_pointcloud_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_poses_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_present_pass.h"
@@ -870,6 +872,115 @@ TEST_F(RhiPassesTest, MeshShadowDarkensTheReceiverUnderTheCaster) {
       << centre_darkened << " pixels of the caster's own lit top face darkened: a surface facing the light with "
       << "nothing occluding it cannot be shadowed. This is the signature of a wrong NDC-z -> stored-depth mapping "
       << "(SceneUbo::shadow_depth), which breaks the comparison across the whole light frustum.";
+}
+
+// The GPU reduction must agree with a CPU scan of the same points, exactly. Unlike
+// every other case here this is checkable against ground truth rather than against
+// pixels, so it is worth asserting precisely: the reduction is arithmetic, and the
+// ordered-key trick that lets integer atomicMin/atomicMax order floats is the kind of
+// thing that works for positives and quietly fails for negatives.
+//
+// Non-finite points are included on purpose, to pin that they are EXCLUDED rather
+// than clamped. Note what this does not prove: removing the shader's per-workgroup
+// finite guard leaves both these tests passing, because the ordered-key mapping makes
+// the +/-inf seeds the identity element of each atomic. Validity is decided by the
+// finite COUNT the host reads back, which is the mechanism actually under test here.
+TEST_F(RhiPassesTest, GpuAabbReductionMatchesACpuScan) {
+  if (!harness_.rhi().isFeatureSupported(QRhi::Compute)) {
+    GTEST_SKIP() << "backend has no compute support; PointCloudLayer keeps its CPU scan";
+  }
+
+  struct Point {
+    float x;
+    float y;
+    float z;
+    float scalar;
+  };
+  // Deliberately spanning zero on every axis, so a sign-blind key ordering fails.
+  std::vector<Point> points{
+      {-3.5F, 0.25F, 7.0F, 0.0F},  {2.0F, -8.75F, -1.5F, 0.0F}, {0.0F, 0.0F, 0.0F, 0.0F},
+      {11.25F, 4.0F, -6.5F, 0.0F}, {-0.5F, 9.5F, 2.25F, 0.0F},
+  };
+  // Must be excluded entirely, not clamped: a NaN reaching min/max would propagate.
+  points.push_back({std::numeric_limits<float>::quiet_NaN(), 1.0F, 1.0F, 0.0F});
+  points.push_back({std::numeric_limits<float>::infinity(), 1.0F, 1.0F, 0.0F});
+
+  glm::vec3 cpu_lo(std::numeric_limits<float>::max());
+  glm::vec3 cpu_hi(std::numeric_limits<float>::lowest());
+  for (const Point& p : points) {
+    if (!std::isfinite(p.x) || !std::isfinite(p.y) || !std::isfinite(p.z)) {
+      continue;
+    }
+    cpu_lo = glm::min(cpu_lo, glm::vec3(p.x, p.y, p.z));
+    cpu_hi = glm::max(cpu_hi, glm::vec3(p.x, p.y, p.z));
+  }
+
+  QRhi& rhi = harness_.rhi();
+  // StorageBuffer usage is what lets compute read the cloud's own bytes rather than a
+  // second copy; RhiPointcloudPass creates its buffer the same way.
+  std::unique_ptr<QRhiBuffer> buf(rhi.newBuffer(
+      QRhiBuffer::Static, QRhiBuffer::VertexBuffer | QRhiBuffer::StorageBuffer,
+      static_cast<quint32>(points.size() * sizeof(Point))));
+  ASSERT_TRUE(buf->create());
+
+  RhiPointcloudAabbReducer reducer;
+  ASSERT_TRUE(reducer.ensure(rhi)) << "compute is supported but the reducer failed to build";
+  EXPECT_TRUE(reducer.probed());
+
+  QRhiCommandBuffer* cb = nullptr;
+  ASSERT_EQ(rhi.beginOffscreenFrame(&cb), QRhi::FrameOpSuccess);
+  QRhiResourceUpdateBatch* upload = rhi.nextResourceUpdateBatch();
+  upload->uploadStaticBuffer(buf.get(), points.data());
+  cb->resourceUpdate(upload);  // applied before the compute pass reads it
+  reducer.dispatch(rhi, *cb, buf.get(), static_cast<int>(points.size()), static_cast<int>(sizeof(Point)), 0);
+  rhi.endOffscreenFrame();
+
+  EXPECT_TRUE(reducer.available()) << "a successful dispatch must leave the reducer available";
+  const std::optional<AABB> box = reducer.poll();
+  ASSERT_TRUE(box.has_value()) << "the readback did not complete when the frame ended";
+  ASSERT_TRUE(box->valid) << "the reduction reported no finite points, but five of seven are finite";
+
+  EXPECT_FLOAT_EQ(box->min.x, cpu_lo.x);
+  EXPECT_FLOAT_EQ(box->min.y, cpu_lo.y);
+  EXPECT_FLOAT_EQ(box->min.z, cpu_lo.z);
+  EXPECT_FLOAT_EQ(box->max.x, cpu_hi.x);
+  EXPECT_FLOAT_EQ(box->max.y, cpu_hi.y);
+  EXPECT_FLOAT_EQ(box->max.z, cpu_hi.z);
+
+  // A second poll must not re-deliver: PointCloudLayer treats every result as a new
+  // one and would re-fit the camera on a repeat.
+  EXPECT_FALSE(reducer.poll().has_value()) << "poll() delivered the same reduction twice";
+}
+
+// An all-non-finite cloud must report "no bounds", not a garbage box built from the
+// +/-inf seeds. PointCloudLayer distinguishes this from "not ready" and leaves the
+// camera alone, so conflating them would fling the view to infinity.
+TEST_F(RhiPassesTest, GpuAabbReductionReportsNoBoundsForANonFiniteCloud) {
+  if (!harness_.rhi().isFeatureSupported(QRhi::Compute)) {
+    GTEST_SKIP() << "backend has no compute support";
+  }
+  const float nan = std::numeric_limits<float>::quiet_NaN();
+  const std::vector<float> points{nan, nan, nan, 0.0F, nan, nan, nan, 0.0F};
+
+  QRhi& rhi = harness_.rhi();
+  std::unique_ptr<QRhiBuffer> buf(rhi.newBuffer(
+      QRhiBuffer::Static, QRhiBuffer::VertexBuffer | QRhiBuffer::StorageBuffer,
+      static_cast<quint32>(points.size() * sizeof(float))));
+  ASSERT_TRUE(buf->create());
+
+  RhiPointcloudAabbReducer reducer;
+  ASSERT_TRUE(reducer.ensure(rhi));
+  QRhiCommandBuffer* cb = nullptr;
+  ASSERT_EQ(rhi.beginOffscreenFrame(&cb), QRhi::FrameOpSuccess);
+  QRhiResourceUpdateBatch* upload = rhi.nextResourceUpdateBatch();
+  upload->uploadStaticBuffer(buf.get(), points.data());
+  cb->resourceUpdate(upload);
+  reducer.dispatch(rhi, *cb, buf.get(), 2, static_cast<int>(sizeof(float)) * 4, 0);
+  rhi.endOffscreenFrame();
+
+  const std::optional<AABB> box = reducer.poll();
+  ASSERT_TRUE(box.has_value()) << "a reduction that found nothing must still report back";
+  EXPECT_FALSE(box->valid) << "an all-NaN cloud produced a 'valid' box; the inf seeds leaked out";
 }
 
 TEST_F(RhiPassesTest, MarkerCubeDraws) {

@@ -85,17 +85,23 @@ own (see below), has no app UI, and is absent from `REQUIREMENTS.md`.
 
 **Still to do**, in dependency order:
 
-1. **Mesh shadows.** The only substantive rendering feature with no QRhi counterpart:
-   the depth-only pre-pass (`MeshRenderPass::renderDepthOnly`), the shadow map, and
-   shadow receive in the mesh shader. `Scene3DLayer::renderShadowCasters()` and
-   `meshShadowBounds()` are OpenGL-only by design and stay outside `IMeshSink` — the
-   seam deliberately does not cover them, so porting shadows is additive rather than
-   a reshape.
-2. **The compute AABB reducer → `QRhiComputePipeline`**, keeping the documented CPU
-   fallback for backends without compute. Not a correctness gap today:
-   `RhiPointCloudSink` reports `gpuAabbAvailable()` false forever, so `PointCloudLayer`
-   keeps its CPU bounds scan — it just pays per sample on large clouds.
-3. **Wire the real dock** behind the view seam above, then select the backend per
+1. **Drive the two parity passes from the view.** Both are now IMPLEMENTED and
+   tested, and neither is called by `RhiSceneViewWidget` — so nothing renders shadows
+   or reduces bounds on the GPU in the app yet:
+
+   - **Mesh shadows** — `RhiShadowMapPass` (target) plus `RhiMeshPass::drawDepthOnly`
+     (casters) and the PCF receive in `mesh.frag`. The view must, each frame:
+     `initializeDepthOnly()` against the shadow target, fit the light camera with the
+     core `fitDirectionalShadowCamera`/`extendAabbToGroundShadow` helpers, run the
+     depth-only pass BEFORE the scene pass, and `setShadowMap()` on every mesh pass.
+     `initializeDepthOnly()` is per-frame on purpose — see its doc comment.
+   - **The GPU AABB reducer** — `RhiPointcloudAabbReducer`. Compute cannot run inside
+     a render pass, so the view dispatches it between the prepares and the scene pass,
+     like the shadow pass. `RhiPointCloudSink` still disclaims `gpuAabbAvailable()`;
+     until it forwards the reducer, `PointCloudLayer` keeps its CPU scan (correct, just
+     not the parity win).
+
+2. **Wire the real dock** behind the view seam above, then select the backend per
    platform and drop the placeholder on macOS. `Scene3DRhiPreviewDock` becomes
    redundant at that point; deleting it is the signal the work landed.
 
@@ -105,6 +111,10 @@ own (see below), has no app UI, and is absent from `REQUIREMENTS.md`.
    rather than a correctness one: the preview repaints every tick because it is a dev
    tool, and the real dock cannot. That wants a measured number (≤60 Hz), not an
    assertion.
+
+Both parity passes are verified on Metal only. Each contains a branch that exists
+BECAUSE OpenGL differs — the shadow receiver's NDC-z scale/bias and v-flip, and the
+compute path's absence below GL 4.3 — so neither branch has been exercised yet.
 
 Geometry passes, the composite operators and SSAO are complete and verified on both
 Metal and llvmpipe/OpenGL.

@@ -1,0 +1,94 @@
+// Copyright 2026 Davide Faconti
+// SPDX-License-Identifier: MPL-2.0
+#version 430
+
+// GPU reduction of a point cloud's geometric AABB: the QRhi counterpart of
+// PointcloudAabbReducer's compute program, ported algorithm-for-algorithm. Each
+// workgroup strides the cloud, reduces into shared memory, and lands SEVEN atomics —
+// so atomic traffic scales with workgroup count, not point count.
+//
+// Requires compute, which a GL 4.0/4.1 context does not have. That is not a gap to
+// close but the reason the CPU fallback in PointCloudLayer stays: the sink reports
+// availability and the layer keeps scanning until it is confirmed.
+layout(local_size_x = 256) in;
+
+layout(std430, binding = 0) readonly buffer PointData { uint data[]; };
+layout(std430, binding = 1) buffer Result { uint result[]; };
+
+// A uniform BLOCK, not the loose `uniform uint` declarations the OpenGL version
+// uses: Vulkan-style GLSL has no default uniform block, so qsb rejects those.
+layout(std140, binding = 2) uniform Params {
+  // point_count, stride_words (stride_bytes/4), x_word (x_offset_bytes/4; y at +1,
+  // z at +2), total_threads.
+  //
+  // total_threads is supplied rather than computed as gl_NumWorkGroups.x *
+  // gl_WorkGroupSize.x: that builtin cannot be cross-compiled to MSL without
+  // SPIRV-Cross's remap_num_workgroups_builtin(), which qsb does not call, so the
+  // Metal bake fails outright. The host knows the dispatch width anyway.
+  uvec4 params;
+};
+
+// Order-preserving float -> uint so integer atomicMin/atomicMax order floats
+// correctly, including negatives (whose bit patterns descend).
+uint floatToOrderedKey(float v) {
+  uint bits = floatBitsToUint(v);
+  uint mask = (bits & 0x80000000u) != 0u ? 0xFFFFFFFFu : 0x80000000u;
+  return bits ^ mask;
+}
+
+bool isFiniteVec(vec3 p) {
+  return !(isnan(p.x) || isnan(p.y) || isnan(p.z) || isinf(p.x) || isinf(p.y) || isinf(p.z));
+}
+
+shared vec3 s_lo[gl_WorkGroupSize.x];
+shared vec3 s_hi[gl_WorkGroupSize.x];
+shared uint s_fin[gl_WorkGroupSize.x];
+
+void main() {
+  const uint point_count = params.x;
+  const uint stride_words = params.y;
+  const uint x_word = params.z;
+
+  vec3 lo = vec3(uintBitsToFloat(0x7F800000u));  // +inf
+  vec3 hi = vec3(uintBitsToFloat(0xFF800000u));  // -inf
+  uint fin = 0u;
+
+  const uint total = params.w;
+  for (uint i = gl_GlobalInvocationID.x; i < point_count; i += total) {
+    const uint base = (i * stride_words) + x_word;
+    const vec3 p =
+        vec3(uintBitsToFloat(data[base]), uintBitsToFloat(data[base + 1u]), uintBitsToFloat(data[base + 2u]));
+    if (isFiniteVec(p)) {
+      lo = min(lo, p);
+      hi = max(hi, p);
+      fin += 1u;
+    }
+  }
+
+  const uint lid = gl_LocalInvocationID.x;
+  s_lo[lid] = lo;
+  s_hi[lid] = hi;
+  s_fin[lid] = fin;
+  barrier();
+
+  for (uint stride = gl_WorkGroupSize.x / 2u; stride > 0u; stride >>= 1u) {
+    if (lid < stride) {
+      s_lo[lid] = min(s_lo[lid], s_lo[lid + stride]);
+      s_hi[lid] = max(s_hi[lid], s_hi[lid + stride]);
+      s_fin[lid] += s_fin[lid + stride];
+    }
+    barrier();
+  }
+
+  // A workgroup with no finite point must not contribute: its lo/hi are still the
+  // infinities, which would poison the result.
+  if (lid == 0u && s_fin[0] > 0u) {
+    atomicMin(result[0], floatToOrderedKey(s_lo[0].x));
+    atomicMin(result[1], floatToOrderedKey(s_lo[0].y));
+    atomicMin(result[2], floatToOrderedKey(s_lo[0].z));
+    atomicMax(result[3], floatToOrderedKey(s_hi[0].x));
+    atomicMax(result[4], floatToOrderedKey(s_hi[0].y));
+    atomicMax(result[5], floatToOrderedKey(s_hi[0].z));
+    atomicAdd(result[6], s_fin[0]);
+  }
+}

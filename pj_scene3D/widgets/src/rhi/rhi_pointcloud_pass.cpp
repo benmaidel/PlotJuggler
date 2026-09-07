@@ -171,8 +171,11 @@ void RhiPointcloudPass::prepare(QRhiResourceUpdateBatch& updates, const RhiFrame
       // which silently left most of a 2000-point cloud as zeroes. A cloud is
       // large and changes only when a new message arrives, which is exactly what
       // Static + uploadStaticBuffer is for.
+      // StorageBuffer alongside VertexBuffer so RhiPointcloudAabbReducer can read the
+      // same bytes with compute instead of a second copy. Harmless where compute is
+      // absent; QRhi only requires that a storage buffer not be Dynamic.
       instance_buf_ = rhi_->newBuffer(
-          QRhiBuffer::Static, QRhiBuffer::VertexBuffer,
+          QRhiBuffer::Static, QRhiBuffer::VertexBuffer | QRhiBuffer::StorageBuffer,
           static_cast<quint32>(instance_capacity_) * static_cast<quint32>(layout_.stride_bytes));
       if (instance_buf_ == nullptr || !instance_buf_->create()) {
         instance_capacity_ = 0;

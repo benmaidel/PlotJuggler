@@ -18,6 +18,7 @@ set(PJ_SCENE3D_WIDGETS_SOURCES
   src/rhi/rhi_axis_pass.cpp
   src/rhi/rhi_grid_pass.cpp
   src/rhi/rhi_hdr_target.cpp
+  src/rhi/rhi_pointcloud_aabb_reducer.cpp
   src/rhi/rhi_pointcloud_pass.cpp
   src/rhi/rhi_marker_sink.cpp
   src/rhi/rhi_occupancy_grid_sink.cpp
@@ -98,6 +99,7 @@ set(PJ_SCENE3D_WIDGETS_SOURCES
   include/pj_scene3d_widgets/rhi/rhi_poses_pass.h
   include/pj_scene3d_widgets/rhi/rhi_present_pass.h
   include/pj_scene3d_widgets/rhi/rhi_tf_connections_pass.h
+  include/pj_scene3d_widgets/rhi/rhi_pointcloud_aabb_reducer.h
   include/pj_scene3d_widgets/rhi/rhi_shadow_map_pass.h
   include/pj_scene3d_widgets/rhi/rhi_voxel_grid_pass.h
   include/pj_scene3d_widgets/rhi/rhi_voxel_grid_sink.h
@@ -205,6 +207,20 @@ qt6_add_shaders(pj_scene3d_widgets "scene3d_shaders"
     shaders/ssao.frag
     shaders/ssao_blur.frag
     shaders/present.frag
+)
+
+# Compute lives in its own bake because its GLSL floor is HIGHER, not lower: compute
+# shaders need 430, while the graphics pack deliberately reaches down to 400 for old
+# GL drivers. A 4.0/4.1 context therefore has no variant here at all — which is
+# correct and expected, and why PointCloudLayer keeps its CPU bounds scan until the
+# reducer reports itself available.
+qt6_add_shaders(pj_scene3d_widgets "scene3d_compute_shaders"
+  PREFIX "/scene3d_shaders"
+  BASE "shaders"
+  GLSL "430,440"
+  MSL 12
+  FILES
+    shaders/pointcloud_aabb.comp
 )
 
 # ---------------------------------------------------------------------------
