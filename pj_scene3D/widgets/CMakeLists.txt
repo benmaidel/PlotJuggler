@@ -33,6 +33,7 @@ set(PJ_SCENE3D_WIDGETS_SOURCES
   src/rhi/rhi_voxel_grid_sink.cpp
   src/rhi/rhi_ssao_pass.cpp
   src/rhi/rhi_scene_view_widget.cpp
+  src/rhi/rhi_shadow_map_pass.cpp
   src/gl/buffer.cpp
   src/gl/program.cpp
   src/gl/vertex_array.cpp
@@ -97,6 +98,7 @@ set(PJ_SCENE3D_WIDGETS_SOURCES
   include/pj_scene3d_widgets/rhi/rhi_poses_pass.h
   include/pj_scene3d_widgets/rhi/rhi_present_pass.h
   include/pj_scene3d_widgets/rhi/rhi_tf_connections_pass.h
+  include/pj_scene3d_widgets/rhi/rhi_shadow_map_pass.h
   include/pj_scene3d_widgets/rhi/rhi_voxel_grid_pass.h
   include/pj_scene3d_widgets/rhi/rhi_voxel_grid_sink.h
   include/pj_scene3d_widgets/rhi/rhi_ssao_pass.h
@@ -182,6 +184,8 @@ qt6_add_shaders(pj_scene3d_widgets "scene3d_shaders"
     shaders/rhi_probe.frag
     shaders/arrow.vert
     shaders/arrow.frag
+    shaders/mesh_depth.vert
+    shaders/mesh_depth.frag
     shaders/mesh.vert
     shaders/mesh.frag
     shaders/marker_solid.vert

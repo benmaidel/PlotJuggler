@@ -72,6 +72,22 @@ class RhiMeshPass final : public IRhiRenderPass, public IMeshSink {
   /// bucket a draw lands in.
   void setShadingParams(const MeshShadingParams& params);
 
+  /// Bind the directional shadow map produced by RhiShadowMapPass, or nullptr for
+  /// none (the receiver then falls back to a white texel and renders fully lit).
+  /// `light_view_proj` must ALREADY be multiplied by clipSpaceCorrMatrix;
+  /// `world_units_per_texel` comes from ShadowCameraFit and sizes the normal offset.
+  void setShadowMap(QRhiTexture* map, const glm::mat4& light_view_proj, float world_units_per_texel);
+
+  /// Build the depth-only caster pipeline against the SHADOW target's render-pass
+  /// descriptor. Cheap and idempotent, and it must be called EVERY FRAME before the
+  /// caster pass: initialize() releases this pipeline along with everything else, so
+  /// a scene resize or sample-count change would otherwise leave shadows silently
+  /// switched off — the map stays at its cleared 1.0 and every comparison passes, so
+  /// the scene renders exactly as if shadows were disabled rather than visibly wrong.
+  [[nodiscard]] bool initializeDepthOnly(QRhi& rhi, QRhiRenderPassDescriptor& rpd);
+  void prepareDepthOnly(QRhiResourceUpdateBatch& updates);
+  void drawDepthOnly(QRhiCommandBuffer& cb);
+
  private:
   /// std140 layout of the shaders' `SceneUbo` (once per frame).
   struct SceneUbo {
@@ -83,8 +99,18 @@ class RhiMeshPass final : public IRhiRenderPass, public IMeshSink {
     /// Reserved. Held for the SSAO/EDL strengths that land with those passes; the
     /// shader must still declare it so the block layout stays fixed.
     float render_flags[4];
+    /// World -> light clip space, PRE-multiplied by clipSpaceCorrMatrix. The same
+    /// matrix drives the caster pass, which is what keeps xy->UV consistent across
+    /// backends without a separate flip flag.
+    float shadow_light_view_proj[16];
+    /// has_shadow, normal_offset (world units per texel), softness (texels), unused.
+    float shadow_params[4];
+    /// NDC z -> stored depth: scale, bias. From QRhi::isClipDepthZeroToOne() — (1,0)
+    /// where clip z is already [0,1], (0.5,0.5) on OpenGL. Getting this wrong
+    /// shadows the whole scene, and it cannot be baked per backend.
+    float shadow_depth[4];
   };
-  static_assert(sizeof(SceneUbo) == 128);
+  static_assert(sizeof(SceneUbo) == 224);
 
   /// std140 layout of the shaders' `DrawUbo` (one slot per draw).
   struct DrawUbo {
@@ -179,6 +205,23 @@ class RhiMeshPass final : public IRhiRenderPass, public IMeshSink {
   /// Capacity of draw_ubo_ in slot_count; grown geometrically.
   int draw_ubo_capacity_ = 0;
   QRhiSampler* sampler_ = nullptr;
+  /// Separate from sampler_: ClampToEdge because the PCF kernel samples past the map
+  /// edge, and NEAREST because D32F is frequently not linear-filterable — the PCF
+  /// does its own filtering, so nothing is lost.
+  QRhiSampler* shadow_sampler_ = nullptr;
+  QRhiTexture* shadow_map_ = nullptr;
+  glm::mat4 shadow_light_view_proj_{1.0F};
+  float shadow_world_units_per_texel_ = 0.0F;
+
+  /// Depth-only caster pipeline, compiled against the SHADOW target's descriptor
+  /// rather than the scene's — a pipeline is tied to its render pass.
+  QRhiGraphicsPipeline* depth_pipeline_ = nullptr;
+  QRhiShaderResourceBindings* depth_srb_ = nullptr;
+  QRhiBuffer* depth_scene_ubo_ = nullptr;
+  QRhiBuffer* depth_draw_ubo_ = nullptr;
+  std::uint32_t depth_draw_ubo_stride_ = 0;
+  int depth_draw_ubo_capacity_ = 0;
+  QRhiRenderPassDescriptor* depth_rpd_ = nullptr;
   /// Opaque (depth write, no blend) and translucent (blended, depth read-only).
   /// The collision overlay reuses the translucent pipeline.
   QRhiGraphicsPipeline* pipeline_opaque_ = nullptr;

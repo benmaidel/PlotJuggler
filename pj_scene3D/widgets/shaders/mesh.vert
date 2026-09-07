@@ -20,6 +20,9 @@ layout(location = 3) out vec2 v_uv;
 layout(location = 4) out vec3 v_tangent;
 layout(location = 5) out vec3 v_bitangent;
 
+// Deliberately a PREFIX of the host's SceneUbo: mesh.frag declares the shadow fields
+// that follow, and the vertex stage does not use them. A shader may declare a SMALLER
+// block than the buffer holds — never a larger one.
 layout(std140, binding = 0) uniform SceneUbo {
   mat4 view_proj;
   vec4 camera_pos;      // .xyz world-space eye; .w unused

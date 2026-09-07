@@ -16,6 +16,10 @@
 namespace pj::scene3d::rhi {
 namespace {
 
+/// Mirrors ShadowMapPass's glPolygonOffset(2.0, 4.0) on the OpenGL caster pass.
+constexpr float kShadowSlopeScaledDepthBias = 2.0F;
+constexpr int kShadowDepthBiasUnits = 4;
+
 Q_LOGGING_CATEGORY(lcRhiMesh, "pj.scene3d.rhi.mesh")
 
 QShader loadBakedShader(const QString& path) {
@@ -254,6 +258,7 @@ const RhiMeshPass::MaterialBindings* RhiMeshPass::bindingsFor(
       SRB::sampledTexture(4, SRB::FragmentStage, nrm, sampler_),
       SRB::sampledTexture(5, SRB::FragmentStage, ao, sampler_),
       SRB::sampledTexture(6, SRB::FragmentStage, emissive, sampler_),
+      SRB::sampledTexture(7, SRB::FragmentStage, shadow_map_ != nullptr ? shadow_map_ : white_tex_, shadow_sampler_),
   });
   if (!srb->create()) {
     qCWarning(lcRhiMesh) << "material bindings creation failed";
@@ -386,6 +391,16 @@ bool RhiMeshPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd, int sampl
     release();
     return false;
   }
+  // Nearest + ClampToEdge: the PCF kernel reaches past the map edge (clamping keeps a
+  // border texel from smearing), and D32F is frequently not linear-filterable, which
+  // costs nothing here because the 16-tap kernel does the filtering itself.
+  shadow_sampler_ = rhi.newSampler(
+      QRhiSampler::Nearest, QRhiSampler::Nearest, QRhiSampler::None, QRhiSampler::ClampToEdge,
+      QRhiSampler::ClampToEdge);
+  if (shadow_sampler_ == nullptr || !shadow_sampler_->create()) {
+    release();
+    return false;
+  }
 
   QRhiVertexInputLayout layout;
   layout.setBindings({QRhiVertexInputBinding(sizeof(Vertex))});
@@ -422,6 +437,7 @@ bool RhiMeshPass::initialize(QRhi& rhi, QRhiRenderPassDescriptor& rpd, int sampl
       SRB::sampledTexture(4, SRB::FragmentStage, flat_normal_tex_, sampler_),
       SRB::sampledTexture(5, SRB::FragmentStage, white_tex_, sampler_),
       SRB::sampledTexture(6, SRB::FragmentStage, white_tex_, sampler_),
+      SRB::sampledTexture(7, SRB::FragmentStage, white_tex_, shadow_sampler_),
   });
   if (!layout_srb->create()) {
     delete layout_srb;
@@ -575,7 +591,156 @@ void RhiMeshPass::prepare(QRhiResourceUpdateBatch& updates, const RhiFrameContex
   scene.light_scales[1] = shading_.direct_scale;
   scene.light_scales[2] = shading_.fill_light_scale;
   scene.light_scales[3] = shading_.env_intensity;
+  std::memcpy(scene.shadow_light_view_proj, &shadow_light_view_proj_[0][0], sizeof(scene.shadow_light_view_proj));
+  scene.shadow_params[0] = (shadow_map_ != nullptr && shading_.shadows_enabled) ? 1.0F : 0.0F;
+  // The 1.5x and the softness constant are the OpenGL renderer's, taken from the same
+  // places it takes them, so the two backends cannot drift into different bias.
+  scene.shadow_params[1] = shadow_world_units_per_texel_ * 1.5F;
+  scene.shadow_params[2] = look::kShadowSoftnessTexels;
+  // See SceneUbo::shadow_depth — the receiver maps its computed NDC z into the range
+  // the depth attachment actually stored.
+  const bool zero_to_one = rhi_ != nullptr && rhi_->isClipDepthZeroToOne();
+  scene.shadow_depth[0] = zero_to_one ? 1.0F : 0.5F;
+  scene.shadow_depth[1] = zero_to_one ? 0.0F : 0.5F;
+  // INDEPENDENT of the z mapping above, and the reason this needs its own flag: the
+  // clip-space correction fixes NDC, but where NDC y lands in a texture we then SAMPLE
+  // is a separate question. Where the framebuffer is y-down (Metal, Vulkan, D3D),
+  // ndc.y = +1 is row 0, so v runs opposite to the usual y*0.5+0.5.
+  scene.shadow_depth[2] = (rhi_ != nullptr && !rhi_->isYUpInFramebuffer()) ? 1.0F : 0.0F;
   updates.updateDynamicBuffer(scene_ubo_, 0, sizeof(SceneUbo), &scene);
+}
+
+void RhiMeshPass::setShadowMap(QRhiTexture* map, const glm::mat4& light_view_proj, float world_units_per_texel) {
+  // A texture identity change invalidates every per-material binding set, because
+  // binding 7 names the map directly. Dropping them makes the next prepare() rebuild
+  // them against the new one — the same rule the source texture follows.
+  if (shadow_map_ != map) {
+    for (MaterialBindings& entry : material_srbs_) {
+      delete entry.srb;
+    }
+    material_srbs_.clear();
+  }
+  shadow_map_ = map;
+  shadow_light_view_proj_ = light_view_proj;
+  shadow_world_units_per_texel_ = world_units_per_texel;
+}
+
+bool RhiMeshPass::initializeDepthOnly(QRhi& rhi, QRhiRenderPassDescriptor& rpd) {
+  if (depth_pipeline_ != nullptr && rhi_ == &rhi && depth_rpd_ == &rpd) {
+    return true;
+  }
+  delete depth_pipeline_;
+  depth_pipeline_ = nullptr;
+  delete depth_srb_;
+  depth_srb_ = nullptr;
+  delete depth_scene_ubo_;
+  depth_scene_ubo_ = nullptr;
+  delete depth_draw_ubo_;
+  depth_draw_ubo_ = nullptr;
+  depth_draw_ubo_capacity_ = 0;
+  depth_rpd_ = &rpd;
+
+  const QShader vert = loadBakedShader(QStringLiteral(":/scene3d_shaders/mesh_depth.vert.qsb"));
+  const QShader frag = loadBakedShader(QStringLiteral(":/scene3d_shaders/mesh_depth.frag.qsb"));
+  if (!vert.isValid() || !frag.isValid()) {
+    return false;
+  }
+
+  depth_draw_ubo_stride_ = alignUp(sizeof(float) * 16, static_cast<std::uint32_t>(rhi.ubufAlignment()));
+  depth_scene_ubo_ = rhi.newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, sizeof(float) * 16);
+  depth_draw_ubo_ = rhi.newBuffer(QRhiBuffer::Dynamic, QRhiBuffer::UniformBuffer, depth_draw_ubo_stride_);
+  if (depth_scene_ubo_ == nullptr || depth_draw_ubo_ == nullptr || !depth_scene_ubo_->create() ||
+      !depth_draw_ubo_->create()) {
+    return false;
+  }
+  depth_draw_ubo_capacity_ = 1;
+
+  using SRB = QRhiShaderResourceBinding;
+  depth_srb_ = rhi.newShaderResourceBindings();
+  depth_srb_->setBindings({
+      SRB::uniformBuffer(0, SRB::VertexStage, depth_scene_ubo_),
+      SRB::uniformBufferWithDynamicOffset(1, SRB::VertexStage, depth_draw_ubo_, sizeof(float) * 16),
+  });
+  if (!depth_srb_->create()) {
+    return false;
+  }
+
+  // The full mesh vertex STRIDE with only position declared: the same VBOs the visual
+  // pass uses are bound unchanged, and the depth shader reads attribute 0 only.
+  QRhiVertexInputLayout layout;
+  layout.setBindings({QRhiVertexInputBinding(sizeof(Vertex))});
+  layout.setAttributes({
+      QRhiVertexInputAttribute(0, 0, QRhiVertexInputAttribute::Float3, offsetof(Vertex, position)),
+  });
+
+  depth_pipeline_ = rhi.newGraphicsPipeline();
+  depth_pipeline_->setShaderStages({{QRhiShaderStage::Vertex, vert}, {QRhiShaderStage::Fragment, frag}});
+  depth_pipeline_->setVertexInputLayout(layout);
+  depth_pipeline_->setShaderResourceBindings(depth_srb_);
+  depth_pipeline_->setRenderPassDescriptor(&rpd);
+  // No colour attachment on the shadow target, so no blend targets: the counts must
+  // agree or pipeline creation fails.
+  depth_pipeline_->setTargetBlends({});
+  depth_pipeline_->setDepthTest(true);
+  depth_pipeline_->setDepthWrite(true);
+  depth_pipeline_->setSampleCount(1);
+  depth_pipeline_->setCullMode(QRhiGraphicsPipeline::None);
+  // Mirrors the OpenGL caster's glPolygonOffset(2, 4): pushing casters away from the
+  // light complements the receiver's normal offset against acne.
+  depth_pipeline_->setDepthBias(kShadowDepthBiasUnits);
+  depth_pipeline_->setSlopeScaledDepthBias(kShadowSlopeScaledDepthBias);
+  if (!depth_pipeline_->create()) {
+    qCWarning(lcRhiMesh) << "depth-only caster pipeline creation failed";
+    delete depth_pipeline_;
+    depth_pipeline_ = nullptr;
+    return false;
+  }
+  return true;
+}
+
+void RhiMeshPass::prepareDepthOnly(QRhiResourceUpdateBatch& updates) {
+  if (depth_pipeline_ == nullptr || visual_draws_.empty()) {
+    return;
+  }
+  updates.updateDynamicBuffer(depth_scene_ubo_, 0, sizeof(float) * 16, &shadow_light_view_proj_[0][0]);
+
+  const int needed = static_cast<int>(visual_draws_.size());
+  if (needed > depth_draw_ubo_capacity_) {
+    depth_draw_ubo_->setSize(depth_draw_ubo_stride_ * static_cast<quint32>(needed));
+    if (!depth_draw_ubo_->create()) {
+      return;
+    }
+    depth_draw_ubo_capacity_ = needed;
+  }
+  for (int i = 0; i < needed; ++i) {
+    updates.updateDynamicBuffer(
+        depth_draw_ubo_, depth_draw_ubo_stride_ * static_cast<quint32>(i), sizeof(float) * 16,
+        &visual_draws_[static_cast<std::size_t>(i)].model[0][0]);
+  }
+}
+
+void RhiMeshPass::drawDepthOnly(QRhiCommandBuffer& cb) {
+  if (depth_pipeline_ == nullptr || visual_draws_.empty()) {
+    return;
+  }
+  cb.setGraphicsPipeline(depth_pipeline_);
+  const MeshResource* bound = nullptr;
+  for (std::size_t i = 0; i < visual_draws_.size(); ++i) {
+    MeshResource* resource = resourceForDraw(visual_draws_[i]);
+    if (resource == nullptr || resource->vbo == nullptr || resource->ibo == nullptr || resource->index_count == 0U) {
+      continue;
+    }
+    const QRhiCommandBuffer::DynamicOffset dyn{1, depth_draw_ubo_stride_ * static_cast<quint32>(i)};
+    cb.setShaderResources(depth_srb_, 1, &dyn);
+    if (resource != bound) {
+      const QRhiCommandBuffer::VertexInput input{resource->vbo, 0};
+      cb.setVertexInput(0, 1, &input, resource->ibo, 0, QRhiCommandBuffer::IndexUInt32);
+      bound = resource;
+    }
+    // Whole index range in one call: submeshes are contiguous and depth needs no
+    // per-material state, matching MeshRenderPass::renderDepthOnly.
+    cb.drawIndexed(resource->index_count);
+  }
 }
 
 void RhiMeshPass::draw(QRhiCommandBuffer& cb, const RhiFrameContext& /*ctx*/) {
@@ -625,6 +790,19 @@ void RhiMeshPass::release() {
   flat_normal_tex_ = nullptr;
   delete sampler_;
   sampler_ = nullptr;
+  delete shadow_sampler_;
+  shadow_sampler_ = nullptr;
+  shadow_map_ = nullptr;  // borrowed from RhiShadowMapPass; never owned here
+  delete depth_pipeline_;
+  depth_pipeline_ = nullptr;
+  delete depth_srb_;
+  depth_srb_ = nullptr;
+  delete depth_scene_ubo_;
+  depth_scene_ubo_ = nullptr;
+  delete depth_draw_ubo_;
+  depth_draw_ubo_ = nullptr;
+  depth_draw_ubo_capacity_ = 0;
+  depth_rpd_ = nullptr;
   delete scene_ubo_;
   scene_ubo_ = nullptr;
   delete draw_ubo_;

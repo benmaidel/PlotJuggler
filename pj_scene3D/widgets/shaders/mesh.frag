@@ -17,6 +17,20 @@ layout(std140, binding = 0) uniform SceneUbo {
   vec4 key_light_dir;
   vec4 light_scales;  // ambient, direct(key), fill, env_intensity
   vec4 render_flags;  // reserved (SSAO/EDL strengths)
+  // World -> light clip space, already multiplied by QRhi's clipSpaceCorrMatrix by
+  // the host — the same matrix that wrote the map in mesh_depth.vert.
+  mat4 shadow_light_view_proj;
+  vec4 shadow_params;  // has_shadow, normal_offset, softness(texels), unused
+  // NDC z -> stored-depth mapping, supplied by the host from
+  // QRhi::isClipDepthZeroToOne(): (1,0) where clip z is already [0,1] (Metal,
+  // Vulkan, D3D), (0.5,0.5) on OpenGL where it is [-1,1]. Baking this per backend is
+  // impossible in one shader pack, and getting it wrong shadows the entire scene.
+  // .xy: NDC z -> stored depth (scale, bias). .z: 1 when the shadow map's v axis is
+  // inverted relative to ndc.y*0.5+0.5, i.e. on a y-down framebuffer. That is a
+  // SEPARATE correction from the clip-space matrix and from .xy: the matrix fixes
+  // where geometry lands in NDC, this fixes where NDC lands in a texture we sample.
+  // Sharing the corrected matrix between writer and reader does NOT cover it.
+  vec4 shadow_depth;  // z scale, z bias, v flip, unused
 };
 
 layout(std140, binding = 1) uniform DrawUbo {
@@ -42,6 +56,10 @@ layout(binding = 3) uniform sampler2D u_mr_tex;
 layout(binding = 4) uniform sampler2D u_normal_tex;
 layout(binding = 5) uniform sampler2D u_ao_tex;
 layout(binding = 6) uniform sampler2D u_emissive_tex;
+// The shadow map. Bound ALWAYS — a pipeline is compiled against its binding layout,
+// so this cannot appear only when shadows are on; with none, the host binds a 1x1
+// white texel, whose .r of 1.0 makes every depth comparison pass (fully lit).
+layout(binding = 7) uniform sampler2D u_shadow_map;
 
 const float PI = 3.14159265;
 
@@ -92,6 +110,45 @@ const vec3 kEnvGround = vec3(0.28, 0.27, 0.25);
 const vec3 kEnvSky = vec3(0.50, 0.52, 0.55);
 vec3 envRadiance(vec3 dir) {
   return mix(kEnvGround, kEnvSky, clamp((dir.z * 0.5) + 0.5, 0.0, 1.0));
+}
+
+
+// 16-tap Poisson-disk PCF over a plain depth sampler2D, ported from the OpenGL mesh
+// shader. Returns 1.0 when shadows are off or the point projects outside the light
+// frustum: the map is clamped, so an out-of-range UV would otherwise smear a border
+// depth across the scene. A world normal offset (larger at grazing N.L) lifts the
+// comparison point off the surface to kill acne / peter-panning.
+float shadowFactor(vec3 world_pos, vec3 N, vec3 L) {
+  if (shadow_params.x < 0.5) {
+    return 1.0;
+  }
+  const float normal_offset = shadow_params.y;
+  const float softness = max(shadow_params.z, 1.0);
+  const float ndl = max(dot(N, L), 0.0);
+  // Scales with the PCF radius: a wider kernel samples further onto the surface's own
+  // depth, so the bias must clear that whole footprint or curved meshes self-shadow.
+  const vec3 biased = world_pos + (N * (normal_offset * (2.0 - ndl) * softness));
+  const vec4 lc = shadow_light_view_proj * vec4(biased, 1.0);
+  const vec3 ndc = lc.xyz / lc.w;
+  vec2 uv = (ndc.xy * 0.5) + 0.5;
+  if (shadow_depth.z > 0.5) {
+    uv.y = 1.0 - uv.y;
+  }
+  const float depth = (ndc.z * shadow_depth.x) + shadow_depth.y;
+  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || depth > 1.0) {
+    return 1.0;
+  }
+  const vec2 kPoisson[16] = vec2[](
+      vec2(-0.942, -0.399), vec2(0.946, -0.769), vec2(-0.094, -0.929), vec2(0.345, 0.294),
+      vec2(-0.916, 0.458), vec2(-0.815, -0.879), vec2(-0.383, 0.277), vec2(0.975, 0.756),
+      vec2(0.443, -0.975), vec2(0.537, -0.474), vec2(-0.265, -0.419), vec2(0.792, 0.191),
+      vec2(-0.242, 0.997), vec2(-0.814, 0.914), vec2(0.200, 0.786), vec2(0.144, -0.141));
+  const vec2 texel = (1.0 / vec2(textureSize(u_shadow_map, 0))) * softness;
+  float lit = 0.0;
+  for (int i = 0; i < 16; ++i) {
+    lit += depth <= texture(u_shadow_map, uv + (kPoisson[i] * texel)).r ? 1.0 : 0.0;
+  }
+  return lit / 16.0;  // farther-than-stored taps => occluded
 }
 
 void main() {
@@ -152,7 +209,10 @@ void main() {
   // viewer-facing side never goes black.
   const vec3 Lkey = key_light_dir.xyz;
   const vec3 Lfill = normalize(V + vec3(0.0, 0.0, 0.25));
-  const vec3 direct = (shadeLight(N, V, NoV, Lkey, diffuse_color, f0, a) * light_scales.y) +
+  // Shadows modulate ONLY the key/"sun" term — the camera-locked fill and the IBL
+  // ambient stay unshadowed, so shadowed surfaces read as shaded rather than black.
+  const float key_shadow = shadowFactor(v_world_pos, N, Lkey);
+  const vec3 direct = (shadeLight(N, V, NoV, Lkey, diffuse_color, f0, a) * (light_scales.y * key_shadow)) +
                       (shadeLight(N, V, NoV, Lfill, diffuse_color, f0, a) * light_scales.z);
 
   // Image-based ambient (analytic IBL): diffuse irradiance from the hemisphere plus

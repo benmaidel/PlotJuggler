@@ -37,6 +37,7 @@
 #include <vector>
 
 #include "gtest_skip_exit.h"
+#include "pj_scene3d_core/shadow_camera.h"
 #include "pj_scene3d_widgets/rhi/rhi_axis_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_grid_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_hdr_target.h"
@@ -46,6 +47,7 @@
 #include "pj_scene3d_widgets/rhi/rhi_pointcloud_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_poses_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_present_pass.h"
+#include "pj_scene3d_widgets/rhi/rhi_shadow_map_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_tf_connections_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_voxel_grid_pass.h"
 #include "pj_scene3d_widgets/rhi/rhi_voxel_grid_sink.h"
@@ -140,6 +142,13 @@ class Harness {
     suppress_depth_bypass_ = suppress;
   }
 
+  /// When both are set, render() runs the depth-only caster pass into the shadow map
+  /// BEFORE the scene pass, which is the ordering the real view must also use.
+  void setShadowSource(RhiShadowMapPass* target, RhiMeshPass* caster) {
+    shadow_target_ = target;
+    shadow_caster_ = caster;
+  }
+
   /// Render `passes` through the HDR chain and composite. Returns the RGBA8 result,
   /// or a null image when the chain or a readback failed.
   QImage render(const std::vector<IRhiRenderPass*>& passes, const RhiFrameContext& ctx_in, int samples = 4) {
@@ -178,6 +187,21 @@ class Harness {
     const auto lin = [](float c) { return std::pow(c, 2.2F); };
     const QColor scene_clear = QColor::fromRgbF(lin(kBg), lin(kBg), lin(kBg), clear_alpha);
 
+    // The shadow map is filled first, in the same frame. beginPass CONSUMES the
+    // update batch, so the scene pass takes a fresh one; the uploads already queued
+    // in the first batch have been applied by then.
+    if (shadow_target_ != nullptr && shadow_caster_ != nullptr) {
+      // Per frame, because the scene-side initialize() above may have released it.
+      if (!shadow_caster_->initializeDepthOnly(*rhi_, *shadow_target_->renderPassDescriptor())) {
+        return {};
+      }
+      shadow_caster_->prepareDepthOnly(*updates);
+      shadow_target_->begin(*cb, updates);
+      shadow_caster_->drawDepthOnly(*cb);
+      shadow_target_->end(*cb);
+      updates = rhi_->nextResourceUpdateBatch();
+    }
+
     cb->beginPass(hdr_.renderTarget(), scene_clear, {1.0F, 0}, updates);
     cb->setViewport({0.0F, 0.0F, static_cast<float>(kW), static_cast<float>(kH)});
     for (IRhiRenderPass* pass : passes) {
@@ -206,6 +230,8 @@ class Harness {
 
  private:
   bool suppress_depth_bypass_ = false;
+  RhiShadowMapPass* shadow_target_ = nullptr;
+  RhiMeshPass* shadow_caster_ = nullptr;
   std::string unsupported_reason_;
   std::unique_ptr<QOffscreenSurface> surface_;
   std::unique_ptr<QRhi> rhi_;
@@ -239,6 +265,18 @@ RhiFrameContext makeContext() {
 int backgroundLevel(const QImage& img) {
   const QColor corner = img.pixelColor(0, 0);
   return std::max({corner.red(), corner.green(), corner.blue()});
+}
+
+// QMatrix4x4 (column-major) -> glm::mat4, for QRhi::clipSpaceCorrMatrix().
+glm::mat4 toGlmMat(const QMatrix4x4& m) {
+  glm::mat4 out{1.0F};
+  const float* src = m.constData();
+  for (int col = 0; col < 4; ++col) {
+    for (int row = 0; row < 4; ++row) {
+      out[col][row] = src[(col * 4) + row];
+    }
+  }
+  return out;
 }
 
 double drawnCentroidX(const QImage& img) {
@@ -726,6 +764,112 @@ TEST_F(RhiPassesTest, MeshDrawsArePlacedIndependently) {
   EXPECT_GT(span(pair_cols), single_span * 2)
       << "two boxes 3 m apart cover barely more width than one: the per-draw model is being ignored";
   EXPECT_TRUE(hasInteriorGap(pair_cols)) << "the two boxes drew as a single cluster: they share one model matrix";
+}
+
+// A caster must actually darken the receiver beneath it. This is the assertion the
+// whole shadow port exists to satisfy, and it is deliberately end-to-end: the depth
+// map is filled by the real caster pipeline and read by the real receiver, because
+// every interesting way this breaks is at the seam between them.
+//
+// The one genuine porting hazard is the NDC z range. The OpenGL receiver maps
+// clip.z*0.5+0.5 into stored depth; on Metal clip z is already [0,1], so applying
+// that remap would halve every comparison value and shadow the entire scene. The host
+// supplies the mapping from QRhi::isClipDepthZeroToOne() instead — so a backend where
+// that is wrong fails HERE rather than looking like a bias problem.
+TEST_F(RhiPassesTest, MeshShadowDarkensTheReceiverUnderTheCaster) {
+  // A wide flat receiver at z=0 and a small caster hovering above its centre.
+  RhiMeshPass::DrawCall floor;
+  floor.kind = RhiMeshPass::GeometryKind::kBox;
+  floor.model = glm::scale(glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 0.0F, -0.05F)), glm::vec3(6.0F, 6.0F, 0.1F));
+  floor.color = glm::vec4(0.85F, 0.85F, 0.85F, 1.0F);
+  floor.use_vertex_color = false;
+
+  RhiMeshPass::DrawCall caster;
+  caster.kind = RhiMeshPass::GeometryKind::kBox;
+  caster.model = glm::scale(glm::translate(glm::mat4(1.0F), glm::vec3(0.0F, 0.0F, 1.2F)), glm::vec3(1.0F));
+  caster.color = glm::vec4(0.85F, 0.25F, 0.20F, 1.0F);
+  caster.use_vertex_color = false;
+
+  MeshShadingParams shading;
+  shading.shadows_enabled = true;
+
+  RhiMeshPass mesh;
+  mesh.setShadingParams(shading);
+  mesh.setVisualDraws({floor, caster});
+
+  RhiShadowMapPass shadow;
+  ASSERT_TRUE(shadow.ensure(harness_.rhi())) << "shadow map target could not be created";
+  ASSERT_TRUE(mesh.initializeDepthOnly(harness_.rhi(), *shadow.renderPassDescriptor()));
+
+  // Fit the light frustum with the SAME core helper the OpenGL renderer uses, then
+  // apply the backend's clip-space correction — the corrected matrix both writes and
+  // reads the map, which is what keeps the xy->UV mapping consistent.
+  AABB caster_bounds{};
+  expandAABB(caster_bounds, glm::vec3(-0.5F, -0.5F, 0.7F));
+  expandAABB(caster_bounds, glm::vec3(0.5F, 0.5F, 1.7F));
+  caster_bounds = extendAabbToGroundShadow(caster_bounds, shading.key_light_dir, 0.0F);
+  const ShadowCameraFit fit = fitDirectionalShadowCamera(caster_bounds, shading.key_light_dir, kShadowMapSize);
+  ASSERT_TRUE(fit.valid) << "the shadow camera fit failed for a plainly valid caster";
+  const glm::mat4 corrected = toGlmMat(harness_.rhi().clipSpaceCorrMatrix()) * fit.light_view_proj;
+
+  // Look straight down so the floor fills the frame and the caster occludes its
+  // centre; the shadow then lands in a region the camera can see beside the caster.
+  RhiFrameContext ctx;
+  const glm::vec3 eye(0.0F, -0.35F, 7.0F);
+  ctx.view_proj = glm::perspective(glm::radians(45.0F), static_cast<float>(kW) / kH, 0.1F, 100.0F) *
+                  glm::lookAt(eye, glm::vec3(0.0F), glm::vec3(0.0F, 1.0F, 0.0F));
+  ctx.camera_pos_world = eye;
+
+  // Same scene twice: once with the map bound, once without. Differencing the two
+  // isolates the shadow from every other term in the shading, so the assertion cannot
+  // be satisfied by the scene merely being dark.
+  mesh.setShadowMap(nullptr, glm::mat4(1.0F), 0.0F);
+  harness_.setShadowSource(nullptr, nullptr);
+  const QImage unshadowed = harness_.render({&mesh}, ctx);
+  ASSERT_FALSE(unshadowed.isNull());
+
+  mesh.setShadowMap(shadow.depthTexture(), corrected, fit.world_units_per_texel);
+  harness_.setShadowSource(&shadow, &mesh);
+  const QImage shadowed = harness_.render({&mesh}, ctx);
+  harness_.setShadowSource(nullptr, nullptr);
+  ASSERT_FALSE(shadowed.isNull());
+
+  // Count pixels the shadow made materially darker, and check none got brighter by
+  // more than noise: a shadow only ever subtracts light.
+  int darkened = 0;
+  int brightened = 0;
+  for (int y = 0; y < shadowed.height(); ++y) {
+    for (int x = 0; x < shadowed.width(); ++x) {
+      const int before = unshadowed.pixelColor(x, y).red();
+      const int after = shadowed.pixelColor(x, y).red();
+      if (before - after > 12) {
+        ++darkened;
+      } else if (after - before > 12) {
+        ++brightened;
+      }
+    }
+  }
+  EXPECT_GT(darkened, 200) << "no region darkened: the caster wrote no usable depth, or the receiver never sampled it";
+  EXPECT_LT(brightened, 50) << "shadowing brightened pixels; the factor is not being applied as attenuation";
+
+  // The caster's own TOP face fills the centre of this framing, faces the light, and
+  // has nothing between it and the light — so it must be lit in both renders. This is
+  // what actually pins the NDC z mapping: with the OpenGL remap wrongly applied on a
+  // [0,1]-clip backend, the comparison breaks everywhere INSIDE the light frustum and
+  // the caster self-shadows. A frame-wide bound cannot catch that, because the frustum
+  // is fitted tightly to the caster and everything outside it returns lit regardless.
+  int centre_darkened = 0;
+  for (int y = (kH / 2) - 6; y <= (kH / 2) + 6; ++y) {
+    for (int x = (kW / 2) - 6; x <= (kW / 2) + 6; ++x) {
+      if (unshadowed.pixelColor(x, y).red() - shadowed.pixelColor(x, y).red() > 12) {
+        ++centre_darkened;
+      }
+    }
+  }
+  EXPECT_EQ(centre_darkened, 0)
+      << centre_darkened << " pixels of the caster's own lit top face darkened: a surface facing the light with "
+      << "nothing occluding it cannot be shadowed. This is the signature of a wrong NDC-z -> stored-depth mapping "
+      << "(SceneUbo::shadow_depth), which breaks the comparison across the whole light frustum.";
 }
 
 TEST_F(RhiPassesTest, MarkerCubeDraws) {
