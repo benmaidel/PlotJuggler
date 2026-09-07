@@ -66,27 +66,48 @@ exactly the class of bug QRhi does not report:
   pose array cheap to animate. `RhiAxisPass`, whose instances are already
   world-space, writes identity there.
 
-**Still to do**, roughly in order of value:
+### Backend strategy: DUAL, not a replacement (decision, 2026-09-07)
 
-1. *(Geometry passes, the composite operators and SSAO are complete. EDL is
-   deliberately not ported — see below.)*
-3. Screen-space passes: SSAO and EDL. Both need the resolved single-sample depth
-   the HDR chain already produces — `QRhi::ResolveDepthStencil` is supported on
-   Metal, so the design carries over unchanged.
-4. The compute AABB reducer → `QRhiComputePipeline`, keeping the documented CPU
-   fallback for backends without compute.
-5. **Making the QRhi renderer render topic DATA in the app.** It is already
-   reachable in the app — `Scene3DRhiPreviewDock` (opt-in via `PJ_SCENE3D_RHI`)
-   hosts it in a real dock and draws the TF overlay plus the grid from the live
-   `TransformService`. What is missing is everything driven by layers, and that is
-   blocked on a genuine architectural prerequisite rather than on wiring:
+The OpenGL renderer stays the Linux path; QRhi serves macOS. `Scene3DDockWidget` will
+hold a view *interface* and pick an implementation per platform, rather than the QRhi
+view replacing `SceneViewWidget`.
 
-   `Scene3DDockWidget` drives its content through `Scene3DLayer`, and the layer types
-   **fuse decoding with OpenGL upload** — each implements `initializeGL()` /
-   `render(ViewParams, FrameContext)` and owns GL `IRenderPass` objects internally,
-   with no seam exposing the decoded render structs. The unlock is to split decode
-   from upload per layer; see "The layer decode/upload split" below for the shape and
-   for which layers are done.
+This is forced by feature parity, not preference. QRhi is missing mesh shadows and the
+GPU AABB reduction (below), so switching Linux to it today would regress the v1
+release target. The interface is already enumerated — it is exactly the thirteen view
+responsibilities in the audit further down — so this is the same seam pattern as the
+layer `I*Sink` interfaces, one level up.
+
+Consequence: **macOS keeps its "requires OpenGL 4.5" placeholder until parity closes.**
+The first macOS 3D view anyone sees should match Linux rather than be a visibly weaker
+renderer. EDL is NOT part of that bar — it is deliberately unported for reasons of its
+own (see below), has no app UI, and is absent from `REQUIREMENTS.md`.
+
+**Still to do**, in dependency order:
+
+1. **Mesh shadows.** The only substantive rendering feature with no QRhi counterpart:
+   the depth-only pre-pass (`MeshRenderPass::renderDepthOnly`), the shadow map, and
+   shadow receive in the mesh shader. `Scene3DLayer::renderShadowCasters()` and
+   `meshShadowBounds()` are OpenGL-only by design and stay outside `IMeshSink` — the
+   seam deliberately does not cover them, so porting shadows is additive rather than
+   a reshape.
+2. **The compute AABB reducer → `QRhiComputePipeline`**, keeping the documented CPU
+   fallback for backends without compute. Not a correctness gap today:
+   `RhiPointCloudSink` reports `gpuAabbAvailable()` false forever, so `PointCloudLayer`
+   keeps its CPU bounds scan — it just pays per sample on large clouds.
+3. **Wire the real dock** behind the view seam above, then select the backend per
+   platform and drop the placeholder on macOS. `Scene3DRhiPreviewDock` becomes
+   redundant at that point; deleting it is the signal the work landed.
+
+   The layer prerequisite this used to be blocked on is **done** — all seven layer
+   types have their decode/upload seam and their QRhi adapter. What remains is the
+   view's API surface, and `renderKey` gating within it is a PERFORMANCE contract
+   rather than a correctness one: the preview repaints every tick because it is a dev
+   tool, and the real dock cannot. That wants a measured number (≤60 Hz), not an
+   assertion.
+
+Geometry passes, the composite operators and SSAO are complete and verified on both
+Metal and llvmpipe/OpenGL.
 
 ### The layer decode/upload split
 
